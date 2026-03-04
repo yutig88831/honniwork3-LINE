@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, doc, setDoc, collection, onSnapshot, query, addDoc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
-import { Sparkles, Camera, CheckCircle2, ShieldCheck, ArrowLeft, Target, Check, Trophy, ListOrdered, Medal, Lock, CalendarDays, User, ChevronDown, Quote } from 'lucide-react';
+import { Sparkles, Camera, CheckCircle2, ShieldCheck, ArrowLeft, Target, Check, Trophy, ListOrdered, Medal, Lock, CalendarDays, User, ChevronDown, Quote, Heart } from 'lucide-react';
 
 // --- Firebase 配置 ---
 const firebaseConfig = JSON.parse(__firebase_config);
@@ -49,14 +49,12 @@ const App = () => {
   useEffect(() => {
     if (!user) return;
 
-    // 監聽選定週次的個人目標
     const goalDoc = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', `goal_w${selectedWeek}`);
     const unsubGoal = onSnapshot(goalDoc, (docSnap) => {
       if (docSnap.exists()) setWeeklyGoal(docSnap.data().text);
       else setWeeklyGoal('');
     }, (err) => console.error(err));
 
-    // 監聽暱稱與鎖定狀態
     const profileDoc = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'profile');
     const unsubProfile = onSnapshot(profileDoc, (docSnap) => {
       if (docSnap.exists()) {
@@ -66,7 +64,6 @@ const App = () => {
       }
     }, (err) => console.error(err));
 
-    // 監聽個人當週進度
     const q = collection(db, 'artifacts', appId, 'users', user.uid, `days_w${selectedWeek}`);
     const unsubDays = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -77,29 +74,20 @@ const App = () => {
       setDays(fullWeek);
     }, (err) => console.error(err));
 
-    // 【重要】監聽公共「累計」排行榜 (不分週次)
     const publicQ = collection(db, 'artifacts', appId, 'public', 'data', 'global_leaderboard');
     const unsubPublic = onSnapshot(publicQ, (snapshot) => {
       setGlobalLeaderboard(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (err) => console.error(err));
 
     return () => { 
-      unsubGoal(); 
-      unsubProfile(); 
-      unsubDays(); 
-      unsubPublic(); 
+      unsubGoal(); unsubProfile(); unsubDays(); unsubPublic(); 
     };
   }, [user, selectedWeek]);
 
   // --- 3. 處理邏輯 ---
-
-  // 更新目標時，同步更新到排行榜顯示
   const handleSaveGoal = async (val) => {
     if (!user) return;
-    // 存到個人私有空間
     await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', `goal_w${selectedWeek}`), { text: val });
-    
-    // 同步到公共累計榜（讓大家看到你本週的目標）
     if (selectedWeek === currentRealWeek) {
       const globalRef = doc(db, 'artifacts', appId, 'public', 'data', 'global_leaderboard', user.uid);
       await setDoc(globalRef, { currentGoal: val }, { merge: true });
@@ -108,11 +96,7 @@ const App = () => {
 
   const handleSaveNickname = async () => {
     if (!user || !nickname.trim() || nicknameLocked) return;
-    await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'profile'), { 
-      nickname: nickname.trim(),
-      locked: true 
-    });
-    // 同步暱稱到累計榜
+    await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'profile'), { nickname: nickname.trim(), locked: true });
     const globalRef = doc(db, 'artifacts', appId, 'public', 'data', 'global_leaderboard', user.uid);
     await setDoc(globalRef, { nickname: nickname.trim() }, { merge: true });
     setNicknameLocked(true);
@@ -124,22 +108,17 @@ const App = () => {
 
     const currentDay = days.find(d => d.dayId === dayId);
     const dayRef = doc(db, 'artifacts', appId, 'users', user.uid, `days_w${selectedWeek}`, `day_${dayId}`);
-    
     const isNowTrue = !currentDay[field];
     const updatedStatus = { ...currentDay, [field]: isNowTrue };
     delete updatedStatus.id;
     
-    // 1. 更新個人週進度
     await setDoc(dayRef, updatedStatus);
     
-    // 2. 更新累計積分 (計算加權)
-    // 我們需要先獲取該週所有天的狀態來計算當週 Tickets
     const newDays = days.map(d => d.dayId === dayId ? updatedStatus : d);
     const compCount = newDays.filter(d => d.completed).length;
     const photoCount = newDays.filter(d => d.completed && d.photo).length;
     const weeklyTickets = calculateTickets(compCount, photoCount);
 
-    // 3. 更新到全域累計榜 (使用動態 Key 記錄每週分數，方便前端加總)
     const globalRef = doc(db, 'artifacts', appId, 'public', 'data', 'global_leaderboard', user.uid);
     await setDoc(globalRef, {
       userId: user.uid,
@@ -151,7 +130,6 @@ const App = () => {
     }, { merge: true });
   };
 
-  // --- 4. 計算與渲染 ---
   const calculateTickets = (compDays, photoCount) => {
     let tickets = 0;
     if (compDays >= 7) tickets = 6;
@@ -161,12 +139,10 @@ const App = () => {
     return tickets;
   };
 
-  // 處理累計數據顯示
   const processedLeaderboard = useMemo(() => {
     return globalLeaderboard.map(u => {
       let totalTickets = 0;
       let totalCompleted = 0;
-      // 加總 1-12 週的所有分數
       for (let i = 1; i <= 12; i++) {
         totalTickets += (u[`tickets_w${i}`] || 0);
         totalCompleted += (u[`completed_w${i}`] || 0);
@@ -179,28 +155,39 @@ const App = () => {
   const myPhotoCount = days.filter(d => d.completed && d.photo).length;
   const myTotalTickets = calculateTickets(myCompletedCount, myPhotoCount);
 
+  // --- 奶茶色配色方案 ---
+  const colors = {
+    bg: "bg-[#F5F2ED]", // 燕麥米
+    card: "bg-white",
+    primary: "bg-[#967E6B]", // 奶茶深褐色
+    secondary: "bg-[#D9C5B2]", // 淺奶茶色
+    accent: "text-[#967E6B]",
+    muted: "text-[#B0A695]",
+    border: "border-[#E8E2D9]"
+  };
+
   return (
-    <div className="min-h-screen bg-slate-50 flex justify-center p-4 text-slate-700 font-sans">
+    <div className={`min-h-screen ${colors.bg} flex justify-center p-4 text-[#5C544B] font-sans transition-colors duration-500`}>
       <div className="max-w-md w-full space-y-6">
         
         {/* 導覽與週次切換 */}
         <div className="flex items-center justify-between gap-4 relative">
-          <div className="flex-1 flex bg-white rounded-2xl p-1 shadow-sm border border-slate-100">
-             <button onClick={() => setView('tracker')} className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${view === 'tracker' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-400'}`}>個人打卡</button>
-             <button onClick={() => setView('leaderboard')} className={`flex-1 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all ${view === 'leaderboard' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-400'}`}>
+          <div className={`flex-1 flex ${colors.card} rounded-2xl p-1 shadow-sm border ${colors.border}`}>
+             <button onClick={() => setView('tracker')} className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${view === 'tracker' ? `${colors.primary} text-white shadow-md` : colors.muted}`}>個人打卡</button>
+             <button onClick={() => setView('leaderboard')} className={`flex-1 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all ${view === 'leaderboard' ? `${colors.primary} text-white shadow-md` : colors.muted}`}>
                 <ListOrdered size={16} /> 戰況積分
              </button>
           </div>
           
           <div className="relative">
-            <button onClick={() => setShowWeekPicker(!showWeekPicker)} className="bg-orange-400 text-white px-4 py-2.5 rounded-2xl font-black italic shadow-lg shadow-orange-100 flex items-center gap-2 hover:bg-orange-500 transition-colors">
+            <button onClick={() => setShowWeekPicker(!showWeekPicker)} className={`bg-[#D9C5B2] text-white px-4 py-2.5 rounded-2xl font-black italic shadow-lg shadow-[#D9C5B2]/20 flex items-center gap-2 hover:bg-[#C8B29C] transition-colors`}>
               <CalendarDays size={16} /> W{selectedWeek} <ChevronDown size={14} />
             </button>
             {showWeekPicker && (
-              <div className="absolute right-0 mt-2 w-32 bg-white rounded-2xl shadow-xl border border-slate-100 z-50 overflow-hidden">
+              <div className={`absolute right-0 mt-2 w-32 ${colors.card} rounded-2xl shadow-xl border ${colors.border} z-50 overflow-hidden`}>
                 <div className="max-h-48 overflow-y-auto py-1">
                   {[...Array(12)].map((_, i) => (
-                    <button key={i} onClick={() => { setSelectedWeek(i + 1); setShowWeekPicker(false); }} className={`w-full text-left px-4 py-2 text-sm font-bold ${selectedWeek === i + 1 ? 'bg-orange-50 text-orange-500' : 'hover:bg-slate-50 text-slate-600'}`}>
+                    <button key={i} onClick={() => { setSelectedWeek(i + 1); setShowWeekPicker(false); }} className={`w-full text-left px-4 py-2 text-sm font-bold ${selectedWeek === i + 1 ? 'bg-[#FDFBF9] text-[#967E6B]' : `hover:bg-[#F5F2ED] ${colors.muted}`}`}>
                       第 {i + 1} 週 {i + 1 === currentRealWeek && "(本週)"}
                     </button>
                   )).reverse()}
@@ -211,45 +198,43 @@ const App = () => {
         </div>
 
         {view === 'leaderboard' ? (
-          /* 戰況積分排行榜：全面累計版 */
           <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2">
             <div className="text-center">
-              <h2 className="text-xl font-black text-slate-800 tracking-tight">長征累計總積分榜</h2>
-              <p className="text-[10px] font-bold text-orange-400 uppercase tracking-widest italic">Cumulative Expedition Standings</p>
+              <h2 className="text-xl font-black text-[#5C544B] tracking-tight">累積總積分榜</h2>
+              <p className={`text-[10px] font-bold ${colors.accent} uppercase tracking-widest italic`}>Cumulative Expedition Standings</p>
             </div>
             
             <div className="space-y-4">
               {processedLeaderboard.length === 0 && (
-                <div className="bg-white rounded-[2rem] p-12 text-center text-slate-300 border border-dashed border-slate-200">尚無累計數據</div>
+                <div className={`bg-white rounded-[2rem] p-12 text-center ${colors.muted} border border-dashed ${colors.border}`}>尚無累計數據</div>
               )}
               {processedLeaderboard.map((stat, index) => (
-                <div key={stat.userId} className={`bg-white rounded-[2rem] p-5 shadow-sm border flex flex-col gap-4 transition-all ${stat.userId === user?.uid ? 'border-orange-300 bg-orange-50/50 ring-2 ring-orange-100' : 'border-slate-100'}`}>
+                <div key={stat.userId} className={`bg-white rounded-[2rem] p-5 shadow-sm border flex flex-col gap-4 transition-all ${stat.userId === user?.uid ? 'border-[#D9C5B2] bg-[#FDFBF9] ring-2 ring-[#F5F2ED]' : colors.border}`}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-4">
-                      <div className="w-8 text-center font-black italic text-lg">
+                      <div className="w-8 text-center font-black italic text-lg text-[#967E6B]">
                         {index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : `#${index+1}`}
                       </div>
                       <div>
-                        <h4 className="font-bold text-slate-700 flex items-center gap-2">
+                        <h4 className="font-bold text-[#5C544B] flex items-center gap-2">
                           {stat.nickname}
-                          {stat.userId === user?.uid && <span className="text-[8px] bg-slate-800 text-white px-2 py-0.5 rounded-full uppercase">Me</span>}
+                          {stat.userId === user?.uid && <span className="text-[8px] bg-[#967E6B] text-white px-2 py-0.5 rounded-full uppercase">Me</span>}
                         </h4>
-                        <p className="text-[10px] text-slate-400 font-medium tracking-tight">
-                          總完成 {stat.totalCompleted} 天 | 本週 W{selectedWeek} 分數: {stat[`tickets_w${selectedWeek}`] || 0}
+                        <p className={`text-[10px] ${colors.muted} font-medium tracking-tight`}>
+                          總完成 {stat.totalCompleted} 天 | 本週 W{selectedWeek}: {stat[`tickets_w${selectedWeek}`] || 0}
                         </p>
                       </div>
                     </div>
-                    <div className="bg-slate-800 text-white px-4 py-2 rounded-2xl text-center min-w-[70px]">
+                    <div className={`${colors.primary} text-white px-4 py-2 rounded-2xl text-center min-w-[70px]`}>
                       <div className="text-lg font-black leading-none">{stat.totalTickets}</div>
-                      <div className="text-[8px] uppercase font-bold opacity-60">Total</div>
+                      <div className="text-[8px] uppercase font-bold opacity-60 tracking-wider">Total</div>
                     </div>
                   </div>
                   
-                  {/* 顯示該用戶本週的目標 */}
                   {stat.currentGoal && (
-                    <div className="bg-white/50 border border-slate-50 rounded-xl p-3 flex items-start gap-2 italic">
-                      <Quote size={12} className="text-orange-300 mt-1 shrink-0" />
-                      <p className="text-[11px] font-bold text-slate-500 leading-relaxed line-clamp-2">
+                    <div className="bg-[#F9F7F4] border border-[#F0ECE4] rounded-xl p-3 flex items-start gap-2 italic">
+                      <Quote size={12} className="text-[#D9C5B2] mt-1 shrink-0" />
+                      <p className="text-[11px] font-bold text-[#8C8375] leading-relaxed line-clamp-2">
                         {stat.currentGoal}
                       </p>
                     </div>
@@ -259,40 +244,39 @@ const App = () => {
             </div>
           </div>
         ) : (
-          /* 個人打卡視圖 */
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
             {/* 核心目標 */}
-            <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-slate-100">
-              <h3 className="text-xs font-black text-slate-300 flex items-center gap-2 mb-4 uppercase tracking-widest">
-                <Target size={16} className="text-orange-400" /> Weekly Mission
+            <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-[#E8E2D9]">
+              <h3 className={`text-xs font-black ${colors.muted} flex items-center gap-2 mb-4 uppercase tracking-widest`}>
+                <Target size={16} className="text-[#D9C5B2]" /> Weekly Mission
               </h3>
-              <div className="bg-slate-50 rounded-2xl p-6">
+              <div className="bg-[#FAF8F5] rounded-2xl p-6 border border-[#F0ECE4]">
                 <textarea 
                   value={weeklyGoal}
                   onChange={(e) => setWeeklyGoal(e.target.value)}
                   onBlur={(e) => handleSaveGoal(e.target.value)}
                   readOnly={selectedWeek !== currentRealWeek}
                   placeholder={selectedWeek !== currentRealWeek ? "本週未設定目標" : "本週你想達成什麼？"}
-                  className="w-full bg-transparent border-none focus:ring-0 text-xl font-bold text-slate-700 placeholder:text-slate-300 resize-none h-16 text-center leading-relaxed"
+                  className="w-full bg-transparent border-none focus:ring-0 text-xl font-bold text-[#5C544B] placeholder:text-[#D1C9BE] resize-none h-16 text-center leading-relaxed"
                 />
               </div>
             </div>
 
             {/* 個人分數卡 */}
-            <div className="bg-[#1A1C1E] rounded-[2.5rem] p-8 text-white shadow-2xl relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/10 rounded-full -mr-16 -mt-16 blur-3xl"></div>
+            <div className="bg-[#4A443F] rounded-[2.5rem] p-8 text-white shadow-xl relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-16 -mt-16 blur-3xl"></div>
               <div className="flex justify-between items-start mb-8 relative z-10">
                 <div>
-                  <p className="text-orange-400 text-[10px] font-black uppercase tracking-[0.2em] mb-1">
+                  <p className="text-[#D9C5B2] text-[10px] font-black uppercase tracking-[0.2em] mb-1">
                     {selectedWeek === currentRealWeek ? 'Weekly Performance' : `Week ${selectedWeek} Result`}
                   </p>
                   <h2 className="text-3xl font-black">
                     {selectedWeek === currentRealWeek ? '本週戰況預估' : `第 ${selectedWeek} 週結算`}
                   </h2>
                 </div>
-                <div className="bg-orange-500 px-4 py-2 rounded-2xl shadow-lg shadow-orange-900/20 text-center min-w-[80px]">
+                <div className="bg-[#967E6B] px-4 py-2 rounded-2xl shadow-lg text-center min-w-[80px]">
                   <span className="text-2xl font-black">{myTotalTickets}</span>
-                  <span className="text-[10px] ml-1 font-bold opacity-80 uppercase">Tkts</span>
+                  <span className="text-[10px] ml-1 font-bold opacity-80 uppercase tracking-tighter">Tickets</span>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4 relative z-10">
@@ -308,39 +292,39 @@ const App = () => {
             </div>
 
             {/* 暱稱區 */}
-            <div className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100 flex items-center justify-between">
+            <div className="bg-white rounded-3xl p-5 shadow-sm border border-[#E8E2D9] flex items-center justify-between">
               <div className="flex items-center gap-3 flex-1">
-                <div className={`p-3 rounded-2xl shrink-0 ${nicknameLocked ? 'bg-slate-50 text-slate-400' : 'bg-orange-50 text-orange-500'}`}>
+                <div className={`p-3 rounded-2xl shrink-0 ${nicknameLocked ? 'bg-[#F5F2ED] text-[#D1C9BE]' : 'bg-[#FDF4EB] text-[#967E6B]'}`}>
                   {nicknameLocked ? <Lock size={18} /> : <User size={18} />}
                 </div>
                 <div className="overflow-hidden">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">EXPEDITION NAME</p>
-                  <input type="text" value={nickname} readOnly={nicknameLocked} onChange={(e) => setNickname(e.target.value)} onBlur={nicknameLocked ? undefined : handleSaveNickname} placeholder="輸入後即鎖定暱稱..." className={`w-full bg-transparent border-none p-0 focus:ring-0 text-base font-bold truncate ${nicknameLocked ? 'text-slate-400' : 'text-slate-800'}`} />
+                  <p className={`text-[10px] font-bold ${colors.muted} uppercase tracking-widest`}>EXPEDITION NAME</p>
+                  <input type="text" value={nickname} readOnly={nicknameLocked} onChange={(e) => setNickname(e.target.value)} onBlur={nicknameLocked ? undefined : handleSaveNickname} placeholder="輸入後即鎖定暱稱..." className={`w-full bg-transparent border-none p-0 focus:ring-0 text-base font-bold truncate ${nicknameLocked ? 'text-[#B0A695]' : 'text-[#5C544B]'}`} />
                 </div>
               </div>
               {!nicknameLocked && nickname.trim().length > 0 && (
-                <button onClick={handleSaveNickname} className="bg-slate-800 text-white text-[10px] px-4 py-2 rounded-xl font-bold hover:bg-slate-700 transition-colors">確認鎖定</button>
+                <button onClick={handleSaveNickname} className={`${colors.primary} text-white text-[10px] px-4 py-2 rounded-xl font-bold hover:opacity-90 transition-all shadow-sm`}>確認鎖定</button>
               )}
             </div>
 
             {/* 打卡按鈕清單 */}
             <div className="space-y-4">
               {days.map((day) => (
-                <div key={day.dayId} className={`bg-white rounded-[2rem] p-6 shadow-sm border border-slate-100 transition-opacity ${selectedWeek !== currentRealWeek ? 'opacity-80' : ''}`}>
+                <div key={day.dayId} className={`bg-white rounded-[2rem] p-6 shadow-sm border ${colors.border} transition-all ${selectedWeek !== currentRealWeek ? 'opacity-80' : ''}`}>
                   <div className="flex items-center justify-between mb-6">
-                    <span className="text-xs font-black text-slate-300 italic uppercase">Log Day 0{day.dayId}</span>
-                    {day.completed && <Sparkles className="text-orange-300" size={16} />}
+                    <span className={`text-xs font-black ${colors.muted} italic uppercase tracking-tighter`}>Log Day 0{day.dayId}</span>
+                    {day.completed && <Heart className="text-[#D9C5B2] fill-[#D9C5B2]/20" size={16} />}
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <button onClick={() => handleToggleCheck(day.dayId, 'declared')} className={`py-4 rounded-2xl border-2 font-bold text-sm transition-all flex flex-col items-center gap-2 ${day.declared ? 'bg-orange-400 border-orange-400 text-white shadow-lg shadow-orange-100' : 'bg-white border-slate-50 text-slate-400'} ${selectedWeek !== currentRealWeek ? 'cursor-default' : ''}`}>
+                    <button onClick={() => handleToggleCheck(day.dayId, 'declared')} className={`py-4 rounded-2xl border-2 font-bold text-sm transition-all flex flex-col items-center gap-2 ${day.declared ? 'bg-[#967E6B] border-[#967E6B] text-white shadow-lg shadow-[#967E6B]/10' : 'bg-white border-[#F5F2ED] text-[#D1C9BE] hover:border-[#D9C5B2]'} ${selectedWeek !== currentRealWeek ? 'cursor-default' : ''}`}>
                       <Check size={18} className={day.declared ? 'opacity-100' : 'opacity-20'} />社群宣告
                     </button>
-                    <button onClick={() => handleToggleCheck(day.dayId, 'completed')} className={`py-4 rounded-2xl border-2 font-bold text-sm transition-all flex flex-col items-center gap-2 ${day.completed ? 'bg-orange-400 border-orange-400 text-white shadow-lg shadow-orange-100' : 'bg-white border-slate-50 text-slate-400'} ${selectedWeek !== currentRealWeek ? 'cursor-default' : ''}`}>
+                    <button onClick={() => handleToggleCheck(day.dayId, 'completed')} className={`py-4 rounded-2xl border-2 font-bold text-sm transition-all flex flex-col items-center gap-2 ${day.completed ? 'bg-[#967E6B] border-[#967E6B] text-white shadow-lg shadow-[#967E6B]/10' : 'bg-white border-[#F5F2ED] text-[#D1C9BE] hover:border-[#D9C5B2]'} ${selectedWeek !== currentRealWeek ? 'cursor-default' : ''}`}>
                       <Check size={18} className={day.completed ? 'opacity-100' : 'opacity-20'} />完成目標
                     </button>
                   </div>
                   {day.completed && (
-                    <button onClick={() => handleToggleCheck(day.dayId, 'photo')} className={`w-full mt-3 py-3 rounded-xl border flex items-center justify-center gap-2 text-[11px] font-bold transition-all ${day.photo ? 'bg-orange-50 border-orange-100 text-orange-500 shadow-sm' : 'bg-slate-50 border-transparent text-slate-300'} ${selectedWeek !== currentRealWeek ? 'cursor-default' : ''}`}>
+                    <button onClick={() => handleToggleCheck(day.dayId, 'photo')} className={`w-full mt-3 py-3 rounded-xl border flex items-center justify-center gap-2 text-[11px] font-bold transition-all ${day.photo ? 'bg-[#FDF4EB] border-[#F1E4D8] text-[#967E6B] shadow-sm' : 'bg-[#F9F7F4] border-transparent text-[#D1C9BE]'} ${selectedWeek !== currentRealWeek ? 'cursor-default' : ''}`}>
                       <Camera size={14} />{day.photo ? '已分享社群照 (獲加碼資格)' : '分享社群照 (滿3天加碼2張)'}
                     </button>
                   )}
@@ -349,7 +333,7 @@ const App = () => {
             </div>
           </div>
         )}
-        <div className="h-16"></div>
+        <div className="h-16 text-center text-[#D1C9BE] text-[10px] font-medium tracking-widest uppercase">Stay Warm & Keep Going</div>
       </div>
     </div>
   );
