@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>安心小宇宙 - 累積總積分榜</title>
+    <title>安心小宇宙 - 能量累積計畫</title>
     <!-- React & Babel -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -16,6 +16,43 @@
         .animate-in { animation: fadeIn 0.4s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         ::-webkit-scrollbar { width: 0px; background: transparent; }
+        
+        /* 手機版獎勵文字不分行優化：縮小字距與字體 */
+        .reward-nowrap-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            white-space: nowrap;
+            overflow: hidden;
+            width: 100%;
+        }
+        .reward-title-group {
+            display: flex;
+            align-items: center;
+            flex-shrink: 0;
+            margin-right: 4px;
+        }
+        .reward-badge-group {
+            display: flex;
+            align-items: center;
+            flex-shrink: 1;
+            font-size: 11px;
+            letter-spacing: -0.05em; /* 縮小字距 */
+        }
+        @media (max-width: 375px) {
+            .reward-badge-group { font-size: 10px; }
+            .reward-title-group h2 { font-size: 14px; }
+        }
+
+        /* 下拉選單自定義樣式 */
+        select {
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23ffffff'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='3' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 0.6rem center;
+            background-size: 0.8rem;
+            padding-right: 2rem;
+        }
     </style>
 </head>
 <body>
@@ -26,67 +63,80 @@
 
         const App = () => {
             const [view, setView] = useState('tracker'); 
-            const [selectedWeek, setSelectedWeek] = useState(105);
+            const [selectedWeek, setSelectedWeek] = useState(1); 
             
-            // 暱稱狀態
             const [nickname, setNickname] = useState(localStorage.getItem('habit_nickname') || '');
             const [isNicknameLocked, setIsNicknameLocked] = useState(!!localStorage.getItem('habit_nickname'));
             
-            // 初始化打卡資料
-            const [days, setDays] = useState(() => {
-                const saved = localStorage.getItem('habit_days_data');
-                return saved ? JSON.parse(saved) : Array.from({ length: 7 }, (_, i) => ({
-                    dayId: i + 1,
-                    declared: false,
-                    completed: false,
-                    photo: false
-                }));
+            const [weeksData, setWeeksData] = useState(() => {
+                const saved = localStorage.getItem('habit_multi_week_store');
+                const defaultWeek = {
+                    goal: '',
+                    days: Array.from({ length: 7 }, (_, i) => ({
+                        dayId: i + 1,
+                        declared: false,
+                        completed: false,
+                        photo: false
+                    }))
+                };
+                
+                if (saved) return JSON.parse(saved);
+                
+                const initialStore = {};
+                for (let i = 1; i <= 12; i++) {
+                    initialStore[i] = JSON.parse(JSON.stringify(defaultWeek));
+                }
+                return initialStore;
             });
 
-            // 自動存儲進度
-            useEffect(() => {
-                localStorage.setItem('habit_days_data', JSON.stringify(days));
-            }, [days]);
+            const [isEditingGoal, setIsEditingGoal] = useState(false);
 
-            // 即時計算積分邏輯
+            const currentWeek = useMemo(() => weeksData[selectedWeek], [weeksData, selectedWeek]);
+
+            useEffect(() => {
+                localStorage.setItem('habit_multi_week_store', JSON.stringify(weeksData));
+            }, [weeksData]);
+
+            const updateGoal = (newGoal) => {
+                setWeeksData(prev => ({
+                    ...prev,
+                    [selectedWeek]: { ...prev[selectedWeek], goal: newGoal }
+                }));
+            };
+
+            const toggleDayField = (dayId, field) => {
+                const newDays = currentWeek.days.map(d => 
+                    d.dayId === dayId ? { ...d, [field]: !d[field] } : d
+                );
+                setWeeksData(prev => ({
+                    ...prev,
+                    [selectedWeek]: { ...prev[selectedWeek], days: newDays }
+                }));
+            };
+
             const stats = useMemo(() => {
-                const compCount = days.filter(d => d.completed).length;
-                const photoCount = days.filter(d => d.photo).length;
-                
-                // 基礎抽獎券規則
+                const compCount = currentWeek.days.filter(d => d.completed).length;
+                const photoCount = currentWeek.days.filter(d => d.photo).length;
                 let tickets = 0;
                 if (compCount >= 7) tickets = 6;
                 else if (compCount >= 5) tickets = 4;
                 else if (compCount >= 3) tickets = 2;
-                
-                // 照片加碼：3天加2張
                 if (photoCount >= 3) tickets += 2;
-                
                 return { compCount, photoCount, tickets };
-            }, [days]);
+            }, [currentWeek]);
 
-            // 排行榜顯示資料：包含您目前的即時分數
-            const leaderboard = useMemo(() => {
-                const myEntry = { 
-                    name: nickname || "您自己", 
-                    score: stats.tickets, 
-                    isMe: true 
-                };
-                
-                // 這裡模擬其他人的數據，您可以隨時移除或改為 Firebase 讀取
-                const mockOthers = [
-                    { name: "安心小隊長", score: 8, isMe: false },
-                    { name: "探險家 Alpha", score: 4, isMe: false }
-                ];
-                
-                return [myEntry, ...mockOthers].sort((a, b) => b.score - a.score);
-            }, [stats.tickets, nickname]);
-
-            const toggleDayField = (dayId, field) => {
-                setDays(prev => prev.map(d => 
-                    d.dayId === dayId ? { ...d, [field]: !d[field] } : d
-                ));
-            };
+            const totalTickets = useMemo(() => {
+                return Object.values(weeksData).reduce((total, week) => {
+                    const compCount = week.days.filter(d => d.completed).length;
+                    const photoCount = week.days.filter(d => d.photo).length;
+                    let tickets = 0;
+                    if (compCount >= 7) tickets = 6;
+                    else if (compCount >= 5) tickets = 4;
+                    else if (compCount >= 3) tickets = 2;
+                    if (photoCount >= 3) tickets += 2;
+                    return total + tickets;
+                }, 0);
+            }, [weeksData]);
 
             const handleLockNickname = () => {
                 if (nickname.trim()) {
@@ -95,150 +145,207 @@
                 }
             };
 
-            // 樣式常數
             const colors = {
                 tabActive: "bg-[#967E6B]",
                 tabTextActive: "text-white",
                 tabTextInactive: "text-[#B0A695]",
-                milkTea: "bg-[#D9CFC1]", // 恢復奶茶色標籤
-                border: "border-[#E8E2D9]"
+                milkTea: "bg-[#D9CFC1]",
+                accent: "text-[#E69354]",
+                softBrown: "text-[#967E6B]"
             };
 
             return (
                 <div className="min-h-screen flex justify-center p-4 text-[#5C544B] pb-24">
-                    <div className="max-w-md w-full space-y-6">
+                    <div className="max-w-md w-full space-y-5">
                         
-                        {/* 頂部導覽 */}
-                        <div className="flex items-center justify-between gap-4">
+                        {/* 1. 最頂部標題：去除所有底色、邊框與符號 */}
+                        <div className="text-center pt-2">
+                            <h1 className="text-xl font-black text-[#967E6B] tracking-[0.15em]">安心小宇宙｜能量累積計畫</h1>
+                        </div>
+
+                        {/* 2. 導覽列與下拉選單 */}
+                        <div className="flex items-center justify-between gap-3">
                             <div className="flex-1 flex bg-white rounded-2xl p-1 shadow-sm border border-[#E8E2D9]">
                                 <button onClick={() => setView('tracker')} className={`flex-1 py-3 rounded-xl text-[13px] font-black transition-all ${view === 'tracker' ? colors.tabActive + ' ' + colors.tabTextActive + ' shadow-md' : colors.tabTextInactive}`}>個人打卡</button>
-                                <button onClick={() => setView('leaderboard')} className={`flex-1 py-3 rounded-xl text-[13px] font-black transition-all ${view === 'leaderboard' ? colors.tabActive + ' ' + colors.tabTextActive + ' shadow-md' : colors.tabTextInactive}`}>戰況積分</button>
+                                <button onClick={() => setView('leaderboard')} className={`flex-1 py-3 rounded-xl text-[13px] font-black transition-all ${view === 'leaderboard' ? colors.tabActive + ' ' + colors.tabTextActive + ' shadow-md' : colors.tabTextInactive}`}>累積戰況</button>
                             </div>
-                            {/* 改回奶茶色風格 */}
-                            <div className={`${colors.milkTea} text-white px-5 py-3 rounded-2xl font-black italic shadow-sm flex items-center gap-2 shrink-0`}>
-                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                                W{selectedWeek}
+                            
+                            <div className="relative shrink-0">
+                                <select 
+                                    value={selectedWeek}
+                                    onChange={(e) => setSelectedWeek(Number(e.target.value))}
+                                    className={`${colors.milkTea} text-white pl-3 pr-8 py-3 rounded-2xl font-black shadow-sm outline-none border-none text-[13px]`}
+                                >
+                                    {[1,2,3,4,5,6,7,8,9,10,11,12].map(w => (
+                                        <option key={w} value={w} className="text-[#5C544B]">第 {w} 週</option>
+                                    ))}
+                                </select>
                             </div>
                         </div>
 
                         {view === 'leaderboard' ? (
                             <div className="space-y-4 animate-in">
-                                <div className="text-center pt-4">
-                                    <h2 className="text-2xl font-black text-[#5C544B] tracking-tight">累積總積分榜</h2>
-                                    <p className="text-[10px] font-bold text-[#967E6B] uppercase tracking-[0.2em] italic opacity-70 mt-1">Cumulative Expedition Standings</p>
+                                <div className="text-center pt-2">
+                                    <h2 className="text-2xl font-black text-[#5C544B] tracking-tight">累積戰況</h2>
+                                    <p className="text-[10px] font-bold text-[#967E6B] uppercase tracking-[0.2em] italic opacity-70 mt-1">Personal Total Progress</p>
                                 </div>
                                 
                                 <div className="bg-white rounded-[3rem] p-6 shadow-sm border border-[#E8E2D9]">
-                                    {stats.tickets === 0 && !nickname ? (
-                                        <div className="py-16 text-center">
-                                            <div className="py-12 border-2 border-dashed border-[#F5F2ED] rounded-[2.5rem]">
-                                                <span className="text-3xl block mb-4 grayscale opacity-50">☕</span>
-                                                <p className="text-lg font-bold text-[#D1C9BE]">尚無累積數據</p>
-                                                <p className="text-[10px] text-[#D1C9BE] uppercase tracking-widest mt-2">Start your mission first</p>
+                                    <div className="space-y-4">
+                                        <div className="p-6 rounded-[2rem] bg-[#FDF4EB] border border-[#F1E4D8]">
+                                            {/* 排行榜僅保留使用者本人 */}
+                                            <div className="flex items-center justify-between mb-4">
+                                                <div className="flex items-center gap-4">
+                                                    <div className="w-10 h-10 bg-[#E69354] rounded-full flex items-center justify-center text-white font-black shadow-sm text-sm">1</div>
+                                                    <span className="font-black text-xl text-[#5C544B]">{nickname || "您自己"}</span>
+                                                </div>
+                                                <div className="flex flex-col items-end">
+                                                    <span className="text-4xl font-black text-[#967E6B] leading-none">{totalTickets}</span>
+                                                    <span className="text-[10px] font-bold text-[#B0A695] mt-1">總計抽獎券</span>
+                                                </div>
+                                            </div>
+                                            
+                                            {/* 顯示該週所設定的目標 */}
+                                            <div className="pt-4 border-t border-[#F5E6D3]">
+                                                <div className="flex justify-between items-start text-[11px] font-bold">
+                                                    <span className="text-[#B0A695] shrink-0">第 {selectedWeek} 週目標</span>
+                                                    <span className="text-[#967E6B] font-black text-right pl-4">{currentWeek.goal || "尚未設定"}</span>
+                                                </div>
                                             </div>
                                         </div>
-                                    ) : (
-                                        <div className="space-y-3">
-                                            {leaderboard.map((user, idx) => (
-                                                <div key={idx} className={`flex items-center justify-between p-5 rounded-[2rem] ${user.isMe ? 'bg-[#FDF4EB] border border-[#F1E4D8]' : 'bg-[#FAF8F5]'}`}>
-                                                    <div className="flex items-center gap-4">
-                                                        <span className={`w-6 text-center font-black ${idx === 0 ? 'text-[#E69354]' : 'text-[#B0A695]'}`}>{idx + 1}</span>
-                                                        <span className="font-bold">{user.name}</span>
-                                                    </div>
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="text-xl font-black text-[#967E6B]">{user.score}</span>
-                                                        <span className="text-[10px] font-bold text-[#B0A695]">積分</span>
-                                                    </div>
-                                                </div>
-                                            ))}
+                                    </div>
+                                    
+                                    {/* 積分規則與配戴加碼 (取代數據同步文字) */}
+                                    <div className="mt-8 p-6 bg-[#F9F7F4] rounded-[2rem] border border-dashed border-[#E8E2D9]">
+                                        <div className="text-center mb-4">
+                                            <p className="text-[10px] font-black text-[#967E6B] tracking-[0.2em] uppercase italic">積分與加碼規則</p>
                                         </div>
-                                    )}
+                                        <div className="space-y-3">
+                                            <div className="flex justify-between items-center bg-white/60 px-4 py-2 rounded-xl">
+                                                <span className="text-[11px] font-bold text-[#8C8479]">單週完成 3 / 5 / 7 天</span>
+                                                <span className="text-[11px] font-black text-[#967E6B]">獲 2 / 4 / 6 張券</span>
+                                            </div>
+                                            <div className="flex justify-between items-center bg-white/60 px-4 py-2 rounded-xl">
+                                                <span className="text-[11px] font-bold text-[#8C8479]">配戴照加碼 (單週 3 天)</span>
+                                                <span className="text-[11px] font-black text-[#E69354]">額外獲 2 張券</span>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         ) : (
-                            <div className="space-y-6 animate-in">
+                            <div className="space-y-5 animate-in">
                                 {/* 暱稱區 */}
                                 <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-[#E8E2D9] flex items-center justify-between">
                                     <div className="flex items-center gap-4 flex-1">
-                                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${isNicknameLocked ? 'bg-[#F5F2ED] text-[#D1C9BE]' : 'bg-[#FDF4EB] text-[#967E6B]'}`}>
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                                        <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${isNicknameLocked ? 'bg-[#F5F2ED] text-[#D1C9BE]' : 'bg-[#FDF4EB] text-[#967E6B]'}`}>
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                                         </div>
                                         <div className="overflow-hidden flex-1">
-                                            <p className="text-[10px] font-black text-[#B0A695] uppercase tracking-[0.15em] mb-0.5">Expedition Name</p>
+                                            <p className="text-[10px] font-black text-[#B0A695] uppercase tracking-[0.1em] mb-0.5">Expedition Name</p>
                                             <input 
                                                 type="text" 
                                                 value={nickname} 
                                                 readOnly={isNicknameLocked} 
                                                 onChange={(e) => setNickname(e.target.value)}
                                                 placeholder="請輸入社群暱稱，輸入後即無法更改" 
-                                                className={`w-full bg-transparent border-none p-0 focus:ring-0 text-base font-black truncate ${isNicknameLocked ? 'text-[#B0A695]' : 'text-[#5C544B] placeholder:text-[#D1C9BE] placeholder:font-bold'}`} 
+                                                className={`w-full bg-transparent border-none p-0 focus:ring-0 text-[13px] font-black truncate ${isNicknameLocked ? 'text-[#B0A695]' : 'text-[#5C544B] placeholder:text-[#D1C9BE] placeholder:font-bold'}`} 
                                             />
                                         </div>
                                     </div>
                                     {!isNicknameLocked && nickname.trim().length > 0 && (
-                                        <button onClick={handleLockNickname} className="bg-[#967E6B] text-white text-[11px] px-5 py-2.5 rounded-xl font-black shadow-md shadow-[#967E6B]/20 transition-transform active:scale-95">確認鎖定</button>
+                                        <button onClick={handleLockNickname} className="bg-[#967E6B] text-white text-[11px] px-4 py-2 rounded-xl font-black shadow-md transition-transform active:scale-95">確認鎖定</button>
                                     )}
                                 </div>
 
-                                {/* 今日完成統計 */}
-                                <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-[#E8E2D9] grid grid-cols-3 divide-x divide-[#F5F2ED]">
-                                    <div className="text-center">
-                                        <p className="text-3xl font-black mb-1">{stats.compCount > 0 ? 1 : 0}</p>
-                                        <p className="text-[11px] font-bold text-[#B0A695]">今日完成</p>
-                                    </div>
-                                    <div className="text-center">
-                                        <p className="text-3xl font-black mb-1">{stats.compCount}</p>
-                                        <p className="text-[11px] font-bold text-[#B0A695]">累計完成</p>
-                                    </div>
-                                    <div className="text-center px-2">
-                                        <p className="text-3xl font-black mb-1">{stats.compCount}</p>
-                                        <p className="text-[11px] font-bold text-[#B0A695] truncate">連續天數 ›</p>
+                                {/* 每週目標 (中文) */}
+                                <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-[#E8E2D9]">
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-11 h-11 rounded-2xl bg-[#FFF9F2] text-[#E69354] flex items-center justify-center shrink-0">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+                                        </div>
+                                        <div className="flex-1">
+                                            <p className="text-[10px] font-black text-[#B0A695] uppercase tracking-[0.1em] mb-0.5">本週目標設定</p>
+                                            {isEditingGoal ? (
+                                                <input 
+                                                    autoFocus
+                                                    type="text" 
+                                                    value={currentWeek.goal} 
+                                                    onChange={(e) => updateGoal(e.target.value)}
+                                                    onBlur={() => setIsEditingGoal(false)}
+                                                    onKeyDown={(e) => e.key === 'Enter' && setIsEditingGoal(false)}
+                                                    className="w-full bg-transparent border-none p-0 focus:ring-0 text-base font-black text-[#5C544B]"
+                                                />
+                                            ) : (
+                                                <p onClick={() => setIsEditingGoal(true)} className="text-base font-black text-[#5C544B] cursor-pointer">
+                                                    {currentWeek.goal || "點擊設定本週目標..."}
+                                                </p>
+                                            )}
+                                        </div>
+                                        <button onClick={() => setIsEditingGoal(!isEditingGoal)} className="text-[#D1C9BE]">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                                        </button>
                                     </div>
                                 </div>
 
-                                {/* 累積中按鈕 */}
-                                <div className="bg-[#FEF9E7] rounded-3xl py-6 flex items-center justify-center gap-3 text-[#E69354] font-black text-xl shadow-sm border border-[#FDF2D0]">
-                                    <span>✨</span>
-                                    <span>安心小宇宙 | 累積中</span>
+                                {/* 完成統計 */}
+                                <div className="bg-white rounded-[2.5rem] p-7 shadow-sm border border-[#E8E2D9] grid grid-cols-3 divide-x divide-[#F5F2ED]">
+                                    <div className="text-center">
+                                        <p className="text-2xl font-black mb-0.5 text-[#5C544B]">{currentWeek.days[0].completed ? 1 : 0}</p>
+                                        <p className="text-[10px] font-bold text-[#B0A695]">今日完成</p>
+                                    </div>
+                                    <div className="text-center">
+                                        <p className="text-2xl font-black mb-0.5 text-[#5C544B]">{stats.compCount}</p>
+                                        <p className="text-[10px] font-bold text-[#B0A695]">累計完成</p>
+                                    </div>
+                                    <div className="text-center px-1">
+                                        <p className="text-2xl font-black mb-0.5 text-[#5C544B]">{stats.compCount}</p>
+                                        <p className="text-[10px] font-bold text-[#B0A695] truncate">連續天數</p>
+                                    </div>
                                 </div>
 
-                                {/* 獎勵預估卡片 */}
-                                <div className="bg-[#FFF9F2] rounded-[2.5rem] p-8 border border-[#FBEAD9] shadow-sm">
-                                    <div className="flex justify-between items-center mb-6">
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-xl">🏆</span>
-                                            <h2 className="text-xl font-black text-[#855D3E]">當週獎勵預估</h2>
+                                {/* 當週獎勵預估 (手機端不分行優化) */}
+                                <div className="bg-[#FFF9F2] rounded-[2.5rem] p-6 border border-[#FBEAD9] shadow-sm">
+                                    <div className="reward-nowrap-container mb-5">
+                                        <div className="reward-title-group">
+                                            <span className="text-base mr-1.5">🏆</span>
+                                            <h2 className="text-base font-black text-[#855D3E]">當週獎勵預估</h2>
                                         </div>
-                                        <div className="bg-white px-5 py-2 rounded-full border border-[#FBEAD9] text-[#E69354] font-black text-xs shadow-sm">
-                                            預計獲得 <span className="mx-1 text-sm underline underline-offset-2">{stats.tickets}</span> 張抽獎券
+                                        <div className="reward-badge-group bg-white px-3 py-1.5 rounded-full border border-[#FBEAD9] text-[#E69354] font-black shadow-sm">
+                                            預計獲得<span className="mx-0.5 underline underline-offset-2">{stats.tickets}</span>張抽獎券
                                         </div>
                                     </div>
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="bg-white rounded-2xl p-5 shadow-sm border border-orange-50/50">
-                                            <p className="text-[#B0A695] text-[10px] font-black mb-2 uppercase tracking-wide">配戴加碼進度</p>
-                                            <p className="text-xl font-black text-[#5C544B]">{stats.photoCount} / 3 天</p>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="bg-white rounded-2xl p-4 shadow-sm border border-orange-50/50 text-center sm:text-left">
+                                            <p className="text-[#B0A695] text-[9px] font-black mb-1 uppercase tracking-wider">配戴加碼進度</p>
+                                            <p className="text-base font-black text-[#5C544B]">{stats.photoCount} / 3 天</p>
                                         </div>
-                                        <div className="bg-white rounded-2xl p-5 shadow-sm border border-orange-50/50 overflow-hidden">
-                                            <p className="text-[#B0A695] text-[10px] font-black mb-2 uppercase tracking-wide">使用者代號</p>
-                                            <p className="text-[10px] font-bold text-[#B0A695] truncate">{nickname || "Guest_" + Math.random().toString(36).substr(2, 9)}</p>
+                                        <div className="bg-white rounded-2xl p-4 shadow-sm border border-orange-50/50 text-center sm:text-left">
+                                            <p className="text-[#B0A695] text-[9px] font-black mb-1 uppercase tracking-wider">當前週次</p>
+                                            <p className="text-base font-black text-[#5C544B]">第 {selectedWeek} 週</p>
                                         </div>
                                     </div>
                                 </div>
 
                                 {/* 打卡清單 */}
                                 <div className="space-y-4">
-                                    {days.map((day) => (
+                                    <div className="flex items-center gap-2 px-4">
+                                        <div className="h-[1px] flex-1 bg-[#E8E2D9]"></div>
+                                        <span className="text-[10px] font-black text-[#D1C9BE] uppercase tracking-[0.3em]">Week {selectedWeek} 打卡</span>
+                                        <div className="h-[1px] flex-1 bg-[#E8E2D9]"></div>
+                                    </div>
+                                    {currentWeek.days.map((day) => (
                                         <div key={day.dayId} className="bg-white rounded-[2.5rem] p-7 shadow-sm border border-[#E8E2D9]">
                                             <div className="flex justify-between items-center mb-5">
-                                                <span className="text-[11px] font-black text-[#B0A695] uppercase italic tracking-widest bg-[#F5F2ED] px-3 py-1 rounded-full">Day 0{day.dayId} Log</span>
+                                                <span className="text-[11px] font-black text-[#B0A695] uppercase italic tracking-widest bg-[#F5F2ED] px-3 py-1 rounded-full">Day 0{day.dayId}</span>
                                             </div>
                                             <div className="grid grid-cols-2 gap-4">
                                                 <button onClick={() => toggleDayField(day.dayId, 'declared')} className={`py-4 rounded-2xl border-2 font-black text-sm transition-all active:scale-95 ${day.declared ? 'bg-[#967E6B] border-[#967E6B] text-white shadow-md' : 'bg-white border-[#F5F2ED] text-[#D1C9BE]'}`}>社群宣告</button>
                                                 <button onClick={() => toggleDayField(day.dayId, 'completed')} className={`py-4 rounded-2xl border-2 font-black text-sm transition-all active:scale-95 ${day.completed ? 'bg-[#967E6B] border-[#967E6B] text-white shadow-md' : 'bg-white border-[#F5F2ED] text-[#D1C9BE]'}`}>完成目標</button>
                                             </div>
                                             {day.completed && (
-                                                <button onClick={() => toggleDayField(day.dayId, 'photo')} className={`w-full mt-4 py-4 rounded-2xl border-2 flex items-center justify-center gap-2 text-xs font-black transition-all ${day.photo ? 'bg-[#FDF4EB] border-[#F1E4D8] text-[#967E6B]' : 'bg-[#F9F7F4] border-transparent text-[#D1C9BE]'}`}>
-                                                    {day.photo ? '✅ 已分享社群照 (已加碼)' : '📸 分享社群照 (加碼抽獎券)'}
+                                                <button onClick={() => toggleDayField(day.dayId, 'photo')} className={`w-full mt-4 py-4 rounded-2xl border-2 flex items-center justify-center gap-2 text-[10px] font-black transition-all ${day.photo ? 'bg-[#FDF4EB] border-[#F1E4D8] text-[#967E6B]' : 'bg-[#F9F7F4] border-transparent text-[#D1C9BE]'}`}>
+                                                    {day.photo ? '✅ 已分享社群照' : '📸 分享社群照 (加碼抽獎券)'}
                                                 </button>
                                             )}
                                         </div>
