@@ -10,6 +10,10 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase SDKs (Using compat version for easier Babel integration) -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
         body { font-family: 'Noto Sans TC', sans-serif; -webkit-tap-highlight-color: transparent; background-color: #F5F2ED; }
@@ -17,7 +21,6 @@
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         ::-webkit-scrollbar { width: 0px; background: transparent; }
         
-        /* 手機版獎勵文字不分行優化：縮小字距與字體 */
         .reward-nowrap-container {
             display: flex;
             align-items: center;
@@ -37,14 +40,13 @@
             align-items: center;
             flex-shrink: 1;
             font-size: 11px;
-            letter-spacing: -0.05em; /* 縮小字距 */
+            letter-spacing: -0.05em;
         }
         @media (max-width: 375px) {
             .reward-badge-group { font-size: 10px; }
             .reward-title-group h2 { font-size: 14px; }
         }
 
-        /* 下拉選單自定義樣式 */
         select {
             appearance: none;
             background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23ffffff'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='3' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
@@ -61,58 +63,97 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
+        // Firebase Initialization
+        const firebaseConfig = JSON.parse(__firebase_config);
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'habit-tracker-app';
+
         const App = () => {
+            const [user, setUser] = useState(null);
             const [view, setView] = useState('tracker'); 
             const [selectedWeek, setSelectedWeek] = useState(1); 
-            
-            const [nickname, setNickname] = useState(localStorage.getItem('habit_nickname') || '');
-            const [isNicknameLocked, setIsNicknameLocked] = useState(!!localStorage.getItem('habit_nickname'));
-            
+            const [nickname, setNickname] = useState('');
+            const [isNicknameLocked, setIsNicknameLocked] = useState(false);
+            const [allUsersData, setAllUsersData] = useState([]);
             const [weeksData, setWeeksData] = useState(() => {
-                const saved = localStorage.getItem('habit_multi_week_store');
-                const defaultWeek = {
-                    goal: '',
-                    days: Array.from({ length: 7 }, (_, i) => ({
-                        dayId: i + 1,
-                        declared: false,
-                        completed: false,
-                        photo: false
-                    }))
-                };
-                
-                if (saved) return JSON.parse(saved);
-                
                 const initialStore = {};
                 for (let i = 1; i <= 12; i++) {
-                    initialStore[i] = JSON.parse(JSON.stringify(defaultWeek));
+                    initialStore[i] = {
+                        goal: '',
+                        days: Array.from({ length: 7 }, (_, idx) => ({
+                            dayId: idx + 1,
+                            declared: false,
+                            completed: false,
+                            photo: false
+                        }))
+                    };
                 }
                 return initialStore;
             });
 
             const [isEditingGoal, setIsEditingGoal] = useState(false);
 
-            const currentWeek = useMemo(() => weeksData[selectedWeek], [weeksData, selectedWeek]);
-
+            // Auth Login (RULE 3)
             useEffect(() => {
-                localStorage.setItem('habit_multi_week_store', JSON.stringify(weeksData));
-            }, [weeksData]);
+                const initAuth = async () => {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await auth.signInWithCustomToken(__initial_auth_token);
+                        } else {
+                            await auth.signInAnonymously();
+                        }
+                    } catch (err) {
+                        console.error("Auth error", err);
+                    }
+                };
+                initAuth();
+                const unsubscribe = auth.onAuthStateChanged((u) => {
+                    if (u) setUser(u);
+                });
+                return () => unsubscribe();
+            }, []);
 
-            const updateGoal = (newGoal) => {
-                setWeeksData(prev => ({
-                    ...prev,
-                    [selectedWeek]: { ...prev[selectedWeek], goal: newGoal }
-                }));
-            };
+            // User Data Fetching (RULE 1)
+            useEffect(() => {
+                if (!user) return;
+                
+                const userDocRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('profile').doc('data');
+                const weeksDocRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('progress').doc('allWeeks');
 
-            const toggleDayField = (dayId, field) => {
-                const newDays = currentWeek.days.map(d => 
-                    d.dayId === dayId ? { ...d, [field]: !d[field] } : d
-                );
-                setWeeksData(prev => ({
-                    ...prev,
-                    [selectedWeek]: { ...prev[selectedWeek], days: newDays }
-                }));
-            };
+                const unsubProfile = userDocRef.onSnapshot((snap) => {
+                    if (snap.exists) {
+                        setNickname(snap.data().nickname || '');
+                        setIsNicknameLocked(!!snap.data().nickname);
+                    }
+                });
+
+                const unsubWeeks = weeksDocRef.onSnapshot((snap) => {
+                    if (snap.exists) {
+                        setWeeksData(snap.data().weeks);
+                    }
+                });
+
+                return () => { unsubProfile(); unsubWeeks(); };
+            }, [user]);
+
+            // Global Leaderboard Fetching
+            useEffect(() => {
+                if (!user) return;
+                const publicCol = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('leaderboard');
+                
+                const unsubPublic = publicCol.onSnapshot((snap) => {
+                    const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setAllUsersData(data);
+                }, (err) => console.error(err));
+
+                return () => unsubPublic();
+            }, [user]);
+
+            const currentWeek = useMemo(() => weeksData[selectedWeek], [weeksData, selectedWeek]);
 
             const stats = useMemo(() => {
                 const compCount = currentWeek.days.filter(d => d.completed).length;
@@ -125,56 +166,79 @@
                 return { compCount, photoCount, tickets };
             }, [currentWeek]);
 
-            const totalTickets = useMemo(() => {
-                return Object.values(weeksData).reduce((total, week) => {
-                    const compCount = week.days.filter(d => d.completed).length;
-                    const photoCount = week.days.filter(d => d.photo).length;
-                    let tickets = 0;
-                    if (compCount >= 7) tickets = 6;
-                    else if (compCount >= 5) tickets = 4;
-                    else if (compCount >= 3) tickets = 2;
-                    if (photoCount >= 3) tickets += 2;
-                    return total + tickets;
-                }, 0);
-            }, [weeksData]);
+            const syncData = async (newWeeksData, newNickname = nickname) => {
+                if (!user) return;
+                
+                await db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('progress').doc('allWeeks').set({
+                    weeks: newWeeksData
+                });
 
-            const handleLockNickname = () => {
-                if (nickname.trim()) {
-                    setIsNicknameLocked(true);
-                    localStorage.setItem('habit_nickname', nickname);
+                if (newNickname) {
+                    await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('leaderboard').doc(user.uid).set({
+                        nickname: newNickname,
+                        totalTickets: Object.values(newWeeksData).reduce((total, week) => {
+                            const c = week.days.filter(d => d.completed).length;
+                            const p = week.days.filter(d => d.photo).length;
+                            let t = 0;
+                            if (c >= 7) t = 6; else if (c >= 5) t = 4; else if (c >= 3) t = 2;
+                            if (p >= 3) t += 2;
+                            return total + t;
+                        }, 0),
+                        currentWeekGoal: newWeeksData[selectedWeek].goal,
+                        lastUpdated: Date.now()
+                    });
                 }
             };
 
-            const colors = {
-                tabActive: "bg-[#967E6B]",
-                tabTextActive: "text-white",
-                tabTextInactive: "text-[#B0A695]",
-                milkTea: "bg-[#D9CFC1]",
-                accent: "text-[#E69354]",
-                softBrown: "text-[#967E6B]"
+            const updateGoal = (newGoal) => {
+                const nextData = { ...weeksData, [selectedWeek]: { ...weeksData[selectedWeek], goal: newGoal } };
+                setWeeksData(nextData);
+                syncData(nextData);
             };
+
+            const toggleDayField = (dayId, field) => {
+                const newDays = currentWeek.days.map(d => 
+                    d.dayId === dayId ? { ...d, [field]: !d[field] } : d
+                );
+                const nextData = { ...weeksData, [selectedWeek]: { ...weeksData[selectedWeek], days: newDays } };
+                setWeeksData(nextData);
+                syncData(nextData);
+            };
+
+            const handleLockNickname = async () => {
+                if (nickname.trim() && user) {
+                    setIsNicknameLocked(true);
+                    await db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('profile').doc('data').set({
+                        nickname: nickname.trim()
+                    });
+                    syncData(weeksData, nickname.trim());
+                }
+            };
+
+            const sortedLeaderboard = useMemo(() => {
+                return [...allUsersData].sort((a, b) => b.totalTickets - a.totalTickets);
+            }, [allUsersData]);
+
+            if (!user) return <div className="min-h-screen flex items-center justify-center text-[#967E6B] font-bold">載入中小宇宙...</div>;
 
             return (
                 <div className="min-h-screen flex justify-center p-4 text-[#5C544B] pb-24">
                     <div className="max-w-md w-full space-y-5">
-                        
-                        {/* 1. 最頂部標題：去除所有底色、邊框與符號 */}
                         <div className="text-center pt-2">
                             <h1 className="text-xl font-black text-[#967E6B] tracking-[0.15em]">安心小宇宙｜能量累積計畫</h1>
                         </div>
 
-                        {/* 2. 導覽列與下拉選單 */}
                         <div className="flex items-center justify-between gap-3">
                             <div className="flex-1 flex bg-white rounded-2xl p-1 shadow-sm border border-[#E8E2D9]">
-                                <button onClick={() => setView('tracker')} className={`flex-1 py-3 rounded-xl text-[13px] font-black transition-all ${view === 'tracker' ? colors.tabActive + ' ' + colors.tabTextActive + ' shadow-md' : colors.tabTextInactive}`}>個人打卡</button>
-                                <button onClick={() => setView('leaderboard')} className={`flex-1 py-3 rounded-xl text-[13px] font-black transition-all ${view === 'leaderboard' ? colors.tabActive + ' ' + colors.tabTextActive + ' shadow-md' : colors.tabTextInactive}`}>累積戰況</button>
+                                <button onClick={() => setView('tracker')} className={`flex-1 py-3 rounded-xl text-[13px] font-black transition-all ${view === 'tracker' ? 'bg-[#967E6B] text-white shadow-md' : 'text-[#B0A695]'}`}>個人打卡</button>
+                                <button onClick={() => setView('leaderboard')} className={`flex-1 py-3 rounded-xl text-[13px] font-black transition-all ${view === 'leaderboard' ? 'bg-[#967E6B] text-white shadow-md' : 'text-[#B0A695]'}`}>累積戰況</button>
                             </div>
                             
                             <div className="relative shrink-0">
                                 <select 
                                     value={selectedWeek}
                                     onChange={(e) => setSelectedWeek(Number(e.target.value))}
-                                    className={`${colors.milkTea} text-white pl-3 pr-8 py-3 rounded-2xl font-black shadow-sm outline-none border-none text-[13px]`}
+                                    className="bg-[#D9CFC1] text-white pl-3 pr-8 py-3 rounded-2xl font-black shadow-sm outline-none border-none text-[13px]"
                                 >
                                     {[1,2,3,4,5,6,7,8,9,10,11,12].map(w => (
                                         <option key={w} value={w} className="text-[#5C544B]">第 {w} 週</option>
@@ -187,35 +251,32 @@
                             <div className="space-y-4 animate-in">
                                 <div className="text-center pt-2">
                                     <h2 className="text-2xl font-black text-[#5C544B] tracking-tight">累積戰況</h2>
-                                    <p className="text-[10px] font-bold text-[#967E6B] uppercase tracking-[0.2em] italic opacity-70 mt-1">Personal Total Progress</p>
+                                    <p className="text-[10px] font-bold text-[#967E6B] uppercase tracking-[0.2em] italic opacity-70 mt-1">Global Progress Tracking</p>
                                 </div>
                                 
                                 <div className="bg-white rounded-[3rem] p-6 shadow-sm border border-[#E8E2D9]">
-                                    <div className="space-y-4">
-                                        <div className="p-6 rounded-[2rem] bg-[#FDF4EB] border border-[#F1E4D8]">
-                                            {/* 排行榜僅保留使用者本人 */}
-                                            <div className="flex items-center justify-between mb-4">
-                                                <div className="flex items-center gap-4">
-                                                    <div className="w-10 h-10 bg-[#E69354] rounded-full flex items-center justify-center text-white font-black shadow-sm text-sm">1</div>
-                                                    <span className="font-black text-xl text-[#5C544B]">{nickname || "您自己"}</span>
+                                    <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2">
+                                        {sortedLeaderboard.length > 0 ? sortedLeaderboard.map((item, index) => (
+                                            <div key={item.id} className={`p-5 rounded-[2rem] border ${item.id === user.uid ? 'bg-[#FDF4EB] border-[#F1E4D8]' : 'bg-[#F9F7F4] border-transparent'}`}>
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-black text-xs ${index === 0 ? 'bg-yellow-500' : index === 1 ? 'bg-gray-400' : index === 2 ? 'bg-orange-400' : 'bg-[#D9CFC1]'}`}>{index + 1}</div>
+                                                        <span className="font-black text-lg text-[#5C544B]">{item.nickname}{item.id === user.uid && " (您)"}</span>
+                                                    </div>
+                                                    <div className="flex flex-col items-end">
+                                                        <span className="text-2xl font-black text-[#967E6B]">{item.totalTickets}</span>
+                                                        <span className="text-[9px] font-bold text-[#B0A695]">總計抽獎券</span>
+                                                    </div>
                                                 </div>
-                                                <div className="flex flex-col items-end">
-                                                    <span className="text-4xl font-black text-[#967E6B] leading-none">{totalTickets}</span>
-                                                    <span className="text-[10px] font-bold text-[#B0A695] mt-1">總計抽獎券</span>
-                                                </div>
-                                            </div>
-                                            
-                                            {/* 顯示該週所設定的目標 */}
-                                            <div className="pt-4 border-t border-[#F5E6D3]">
-                                                <div className="flex justify-between items-start text-[11px] font-bold">
-                                                    <span className="text-[#B0A695] shrink-0">第 {selectedWeek} 週目標</span>
-                                                    <span className="text-[#967E6B] font-black text-right pl-4">{currentWeek.goal || "尚未設定"}</span>
+                                                <div className="pt-2 border-t border-black/5">
+                                                    <p className="text-[10px] font-bold text-[#B0A695]">本週目標：<span className="text-[#967E6B]">{item.currentWeekGoal || "努力中"}</span></p>
                                                 </div>
                                             </div>
-                                        </div>
+                                        )) : (
+                                            <p className="text-center py-10 text-[#D1C9BE] font-bold">尚無戰況數據...</p>
+                                        )}
                                     </div>
                                     
-                                    {/* 積分規則與配戴加碼 (取代數據同步文字) */}
                                     <div className="mt-8 p-6 bg-[#F9F7F4] rounded-[2rem] border border-dashed border-[#E8E2D9]">
                                         <div className="text-center mb-4">
                                             <p className="text-[10px] font-black text-[#967E6B] tracking-[0.2em] uppercase italic">積分與加碼規則</p>
@@ -235,7 +296,6 @@
                             </div>
                         ) : (
                             <div className="space-y-5 animate-in">
-                                {/* 暱稱區 */}
                                 <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-[#E8E2D9] flex items-center justify-between">
                                     <div className="flex items-center gap-4 flex-1">
                                         <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${isNicknameLocked ? 'bg-[#F5F2ED] text-[#D1C9BE]' : 'bg-[#FDF4EB] text-[#967E6B]'}`}>
@@ -258,7 +318,6 @@
                                     )}
                                 </div>
 
-                                {/* 每週目標 (中文) */}
                                 <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-[#E8E2D9]">
                                     <div className="flex items-center gap-4">
                                         <div className="w-11 h-11 rounded-2xl bg-[#FFF9F2] text-[#E69354] flex items-center justify-center shrink-0">
@@ -288,7 +347,6 @@
                                     </div>
                                 </div>
 
-                                {/* 完成統計 */}
                                 <div className="bg-white rounded-[2.5rem] p-7 shadow-sm border border-[#E8E2D9] grid grid-cols-3 divide-x divide-[#F5F2ED]">
                                     <div className="text-center">
                                         <p className="text-2xl font-black mb-0.5 text-[#5C544B]">{currentWeek.days[0].completed ? 1 : 0}</p>
@@ -304,7 +362,6 @@
                                     </div>
                                 </div>
 
-                                {/* 當週獎勵預估 (手機端不分行優化) */}
                                 <div className="bg-[#FFF9F2] rounded-[2.5rem] p-6 border border-[#FBEAD9] shadow-sm">
                                     <div className="reward-nowrap-container mb-5">
                                         <div className="reward-title-group">
@@ -327,7 +384,6 @@
                                     </div>
                                 </div>
 
-                                {/* 打卡清單 */}
                                 <div className="space-y-4">
                                     <div className="flex items-center gap-2 px-4">
                                         <div className="h-[1px] flex-1 bg-[#E8E2D9]"></div>
