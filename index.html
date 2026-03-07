@@ -3,106 +3,204 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>安心小宇宙 - 能量累積計畫</title>
-    <!-- 載入框架與樣式庫 -->
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <title>安心小宇宙 - 能量累積計畫 (修復中文輸入版)</title>
+    <!-- 樣式庫與字體 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
     
     <style>
-        body { font-family: 'Noto Sans TC', sans-serif; background-color: #F8F7F4; color: #4A443F; font-size: 14px; }
-        .custom-shadow { box-shadow: 0 10px 30px -5px rgba(150, 126, 107, 0.1); }
-        input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #F8F7F4; color: #4A443F; font-size: 13px; }
         .tab-btn { transition: all 0.2s ease; }
+        input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .loading-overlay { background: rgba(248, 247, 244, 0.8); backdrop-filter: blur(4px); }
+        /* 滾動條美化 */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #EAE2D5; border-radius: 10px; }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
-    <script type="text/babel">
-        const { useState, useMemo } = React;
-        
-        // --- 圖示組件 ---
-        const Icon = ({ name, size = 14, className = "" }) => {
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useMemo, useRef } from "https://esm.sh/react@18";
+        import ReactDOM from "https://esm.sh/react-dom@18/client";
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase 初始化
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'an-xin-cosmos-v1';
+
+        // --- SVG 圖示 ---
+        const Icon = ({ name, size = 12, className = "" }) => {
             const icons = {
                 layout: <path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z" />,
                 trophy: <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 14.66V17c0 .55.47.98.97 1.21C11.47 18.44 12 19 12 19s.53-.56 1.03-.79c.5-.23.97-.66.97-1.21v-2.34c0-3.61-2-5.66-2-5.66s-2 2.05-2 5.66z" />,
                 plus: <path d="M12 5v14M5 12h14" />,
-                trash: <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6" />,
-                info: (
-                    <g>
-                        <circle cx="12" cy="12" r="10"/>
-                        <line x1="12" y1="16" x2="12" y2="12"/>
-                        <line x1="12" y1="8" x2="12.01" y2="8"/>
-                    </g>
-                ),
-                sparkles: <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
+                cloud: <path d="M17.5 19c3.037 0 5.5-2.463 5.5-5.5 0-2.57-1.766-4.727-4.134-5.327C18.423 4.41 15.485 2 12 2c-3.102 0-5.757 2.182-6.591 5.105C2.39 7.55 0 10.051 0 13.167 0 16.388 2.612 19 5.833 19h11.667z"/>,
+                user: <><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></>,
+                trash: <><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6"/></>
             };
             return (
-                <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+                <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
                     {icons[name]}
                 </svg>
             );
         };
 
+        // --- 可編輯文字組件 (解決中文輸入問題) ---
+        const EditableInput = ({ value, onSave, placeholder, className, type = "text" }) => {
+            const [localValue, setLocalValue] = useState(value);
+            
+            // 當外部同步過來的 value 改變時，更新本地顯示
+            useEffect(() => {
+                setLocalValue(value);
+            }, [value]);
+
+            const handleBlur = () => {
+                if (localValue !== value) {
+                    onSave(localValue);
+                }
+            };
+
+            const handleKeyDown = (e) => {
+                if (e.key === 'Enter') {
+                    e.target.blur(); // 觸發 blur 存檔
+                }
+            };
+
+            return (
+                <input
+                    type={type}
+                    className={className}
+                    placeholder={placeholder}
+                    value={localValue || ''}
+                    onChange={(e) => setLocalValue(e.target.value)}
+                    onBlur={handleBlur}
+                    onKeyDown={handleKeyDown}
+                />
+            );
+        };
+
         function App() {
+            const [user, setUser] = useState(null);
+            const [loading, setLoading] = useState(true);
             const [activeTab, setActiveTab] = useState('management');
             const [selectedWeek, setSelectedWeek] = useState(1);
             const [newName, setNewName] = useState('');
-            const [members, setMembers] = useState([]); // 取消範例名單
+            const [members, setMembers] = useState([]); 
+            const [confirmDelete, setConfirmDelete] = useState(null);
 
-            // --- 核心計分邏輯更新 ---
+            // (1) Auth 初始化
+            useEffect(() => {
+                const initAuth = async () => {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (err) { console.error("Auth Error", err); }
+                };
+                initAuth();
+                const unsubscribe = onAuthStateChanged(auth, (u) => {
+                    setUser(u);
+                    if (!u) setLoading(false);
+                });
+                return () => unsubscribe();
+            }, []);
+
+            // (2) Firestore 監聽
+            useEffect(() => {
+                if (!user) return;
+                setLoading(true);
+                const q = collection(db, 'artifacts', appId, 'public', 'data', 'members');
+                const unsubscribe = onSnapshot(q, (snapshot) => {
+                    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setMembers(data);
+                    setLoading(false);
+                }, (err) => {
+                    console.error("Firestore Error", err);
+                    setLoading(false);
+                });
+                return () => unsubscribe();
+            }, [user]);
+
+            // --- 計分邏輯 ---
             const calculateStats = (member, week) => {
                 const weekKey = `w${week}`;
                 const days = member.weeks?.[weekKey] || Array(7).fill({ done: false, photo: false });
                 const doneCount = days.filter(d => d.done).length;
                 const photoCount = days.filter(d => d.photo).length;
 
+                // 打卡獎勵：3/5/7 天 -> 30/60/90
                 let taskCoins = 0;
-                // 打卡獎勵：3/5/7天 -> 30/60/90
                 if (doneCount >= 7) taskCoins = 90;
                 else if (doneCount >= 5) taskCoins = 60;
                 else if (doneCount >= 3) taskCoins = 30;
 
-                // 附圖獎勵：滿3天+50，滿7天+100
+                // 附圖獎勵：滿 3 天 +50，滿 7 天再 +100
+                if (photoCount >= 3) taskCoins += 50;
                 if (photoCount >= 7) taskCoins += 100;
-                else if (photoCount >= 3) taskCoins += 50;
 
                 const bonus = Number(member.bonus?.[weekKey] || 0);
                 const other = Number(member.other?.[weekKey] || 0);
-                
                 const total = taskCoins + bonus + other;
-                return { 
-                    coins: total,
-                    cash: total / 10
-                };
+                return { coins: total, cash: Math.floor(total / 10) };
             };
 
-            const toggleDay = (mId, dayIdx) => {
-                setMembers(prev => prev.map(m => {
-                    if (m.id !== mId) return m;
-                    const weekKey = `w${selectedWeek}`;
-                    const currentWeeks = { ...m.weeks };
-                    if (!currentWeeks[weekKey]) currentWeeks[weekKey] = Array(7).fill({ done: false, photo: false });
-                    
-                    const day = { ...currentWeeks[weekKey][dayIdx] };
-                    if (!day.done) { day.done = true; day.photo = false; }
-                    else if (day.done && !day.photo) { day.photo = true; }
-                    else { day.done = false; day.photo = false; }
-                    
-                    currentWeeks[weekKey][dayIdx] = day;
-                    return { ...m, weeks: currentWeeks };
-                }));
+            const saveMember = async (memberData) => {
+                if (!user) return;
+                try {
+                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'members', memberData.id);
+                    await setDoc(docRef, memberData);
+                } catch (e) { console.error("Save Error", e); }
             };
 
-            const updateField = (mId, field, value) => {
-                setMembers(prev => prev.map(m => {
-                    if (m.id !== mId) return m;
-                    const weekKey = `w${selectedWeek}`;
-                    return { ...m, [field]: { ...m[field], [weekKey]: value } };
-                }));
+            const deleteMember = async (mId) => {
+                if (!user) return;
+                try {
+                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'members', mId);
+                    await deleteDoc(docRef);
+                    setConfirmDelete(null);
+                } catch (e) { console.error("Delete Error", e); }
+            };
+
+            const addMember = async () => {
+                if (!newName || !user) return;
+                const newId = Date.now().toString();
+                const newMem = { id: newId, name: newName, weeks: {}, goals: {}, bonus: {}, other: {} };
+                await saveMember(newMem);
+                setNewName('');
+            };
+
+            const toggleDay = async (mId, dayIdx) => {
+                const m = members.find(mem => mem.id === mId);
+                if (!m) return;
+                const weekKey = `w${selectedWeek}`;
+                const currentWeeks = { ...m.weeks };
+                if (!currentWeeks[weekKey]) currentWeeks[weekKey] = Array(7).fill({ done: false, photo: false });
+                
+                const day = { ...currentWeeks[weekKey][dayIdx] };
+                if (!day.done) { day.done = true; day.photo = false; }
+                else if (day.done && !day.photo) { day.photo = true; }
+                else { day.done = false; day.photo = false; }
+                
+                currentWeeks[weekKey][dayIdx] = day;
+                await saveMember({ ...m, weeks: currentWeeks });
+            };
+
+            const updateField = async (mId, field, value) => {
+                const m = members.find(mem => mem.id === mId);
+                if (!m) return;
+                const weekKey = `w${selectedWeek}`;
+                await saveMember({ ...m, [field]: { ...m[field], [weekKey]: value } });
             };
 
             const rankingList = useMemo(() => {
@@ -114,148 +212,136 @@
             }, [members]);
 
             return (
-                <div className="min-h-screen p-4 md:p-6 max-w-6xl mx-auto">
+                <div className="min-h-screen p-4 md:p-8 max-w-5xl mx-auto relative">
+                    {/* 同步指示器 */}
+                    {loading && (
+                        <div className="fixed inset-0 z-50 loading-overlay flex flex-col items-center justify-center">
+                            <div className="w-8 h-8 border-[3px] border-[#967E6B] border-t-transparent rounded-full animate-spin"></div>
+                            <p className="mt-3 text-[11px] font-black text-[#967E6B] uppercase tracking-widest">Synchronizing</p>
+                        </div>
+                    )}
+
+                    {/* 刪除確認視窗 */}
+                    {confirmDelete && (
+                        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/20 backdrop-blur-sm">
+                            <div className="bg-white rounded-3xl p-8 max-w-xs w-full shadow-2xl border border-[#EAE2D5] text-center">
+                                <div className="w-12 h-12 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                                    <Icon name="trash" size={20} />
+                                </div>
+                                <h3 className="text-sm font-black text-[#3D362F] mb-2">確定要刪除成員嗎？</h3>
+                                <p className="text-[11px] text-[#A69B8F] mb-6 leading-relaxed">刪除後，該成員在雲端的所有打卡紀錄與積分將無法恢復。</p>
+                                <div className="flex gap-3">
+                                    <button onClick={() => setConfirmDelete(null)} className="flex-1 py-3 rounded-xl text-[11px] font-bold text-[#A69B8F] bg-[#FAF9F6] hover:bg-[#F1EFE9]">取消</button>
+                                    <button onClick={() => deleteMember(confirmDelete)} className="flex-1 py-3 rounded-xl text-[11px] font-bold text-white bg-red-500 hover:bg-red-600 shadow-md shadow-red-200">確定刪除</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Header */}
-                    <div className="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                        <div>
-                            <h1 className="text-2xl font-black text-[#3D362F] tracking-tight">
-                                安心小宇宙 <span className="text-[#967E6B] font-medium opacity-60">| 能量計畫</span>
-                            </h1>
-                            <p className="text-[9px] font-black text-[#A69B8F] tracking-[0.2em] uppercase mt-0.5">
-                                {activeTab === 'management' ? 'Management' : 'Leaderboard'}
-                            </p>
+                    <div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                        <div className="flex items-center gap-4">
+                            <div className="bg-[#3D362F] p-2.5 rounded-2xl text-white shadow-lg">
+                                <Icon name="cloud" size={20} />
+                            </div>
+                            <div>
+                                <h1 className="text-xl font-black text-[#3D362F] tracking-tight">安心小宇宙</h1>
+                                <p className="text-[9px] font-black text-[#A69B8F] tracking-[0.2em] uppercase mt-0.5 opacity-80">Energy Accumulation Plan</p>
+                            </div>
                         </div>
 
-                        <div className="flex bg-white p-1 rounded-xl shadow-sm border border-[#EAE2D5]">
-                            <button 
-                                onClick={() => setActiveTab('management')}
-                                className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold tab-btn ${activeTab === 'management' ? 'bg-[#967E6B] text-white' : 'text-[#A69B8F]'}`}
-                            >
+                        <div className="flex bg-white p-1 rounded-2xl shadow-sm border border-[#EAE2D5]">
+                            <button onClick={() => setActiveTab('management')} className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[11px] font-bold tab-btn ${activeTab === 'management' ? 'bg-[#967E6B] text-white shadow-md' : 'text-[#A69B8F] hover:text-[#967E6B]'}`}>
                                 <Icon name="layout" size={12} /> 數據管理
                             </button>
-                            <button 
-                                onClick={() => setActiveTab('leaderboard')}
-                                className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold tab-btn ${activeTab === 'leaderboard' ? 'bg-[#3D362F] text-white' : 'text-[#A69B8F]'}`}
-                            >
+                            <button onClick={() => setActiveTab('leaderboard')} className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[11px] font-bold tab-btn ${activeTab === 'leaderboard' ? 'bg-[#3D362F] text-white shadow-md' : 'text-[#A69B8F] hover:text-[#3D362F]'}`}>
                                 <Icon name="trophy" size={12} /> 累積排行榜
                             </button>
                         </div>
                     </div>
 
                     {activeTab === 'management' ? (
-                        <div className="space-y-4">
-                            {/* Input Bar */}
-                            <div className="flex flex-col md:flex-row gap-3">
-                                <div className="bg-white flex-1 flex rounded-xl shadow-sm border border-[#EAE2D5] overflow-hidden focus-within:ring-1 ring-[#967E6B]/30 transition-all">
+                        <div className="space-y-6">
+                            {/* Toolbar */}
+                            <div className="flex flex-col md:flex-row gap-4">
+                                <div className="bg-white flex-1 flex rounded-2xl shadow-sm border border-[#EAE2D5] overflow-hidden focus-within:ring-2 ring-[#967E6B]/10 transition-all">
+                                    <div className="pl-4 flex items-center text-[#CDC5BC]"><Icon name="user" size={14} /></div>
                                     <input 
-                                        value={newName}
-                                        onChange={(e) => setNewName(e.target.value)}
-                                        placeholder="輸入新成員姓名..."
-                                        className="flex-1 px-4 py-2.5 outline-none font-bold text-sm text-[#3D362F] placeholder:text-[#CDC5BC] placeholder:font-normal"
-                                        onKeyPress={(e) => e.key === 'Enter' && (newName && (setMembers([...members, { id: Date.now().toString(), name: newName, weeks: {}, goals: {}, bonus: {}, other: {} }]), setNewName('')))}
+                                        value={newName} 
+                                        onChange={(e) => setNewName(e.target.value)} 
+                                        placeholder="輸入新成員姓名並按回車..." 
+                                        className="flex-1 px-3 py-3 outline-none font-bold text-xs text-[#3D362F]" 
+                                        onKeyPress={(e) => e.key === 'Enter' && addMember()} 
                                     />
-                                    <button 
-                                        onClick={() => {
-                                            if(newName) setMembers([...members, { id: Date.now().toString(), name: newName, weeks: {}, goals: {}, bonus: {}, other: {} }]);
-                                            setNewName('');
-                                        }}
-                                        className="bg-[#967E6B] text-white px-6 text-xs font-black flex items-center gap-1.5 hover:bg-[#826d5c]"
-                                    >
-                                        <Icon name="plus" size={12} /> 新增
+                                    <button onClick={addMember} className="bg-[#967E6B] text-white px-6 text-[11px] font-black hover:bg-[#826d5c] transition-colors">
+                                        新增成員
                                     </button>
                                 </div>
-                                <div className="bg-white px-4 py-2 rounded-xl shadow-sm border border-[#EAE2D5] flex items-center gap-3">
-                                    <span className="text-[9px] font-black text-[#A69B8F] uppercase tracking-wider">週次</span>
-                                    <select 
-                                        value={selectedWeek} 
-                                        onChange={(e) => setSelectedWeek(Number(e.target.value))}
-                                        className="font-black text-sm text-[#967E6B] outline-none bg-transparent"
-                                    >
-                                        {[...Array(12)].map((_, i) => <option key={i+1} value={i+1}>第 {i+1} 週</option>)}
+                                <div className="bg-white px-4 py-2 rounded-2xl shadow-sm border border-[#EAE2D5] flex items-center gap-4">
+                                    <span className="text-[9px] font-black text-[#A69B8F] uppercase tracking-widest shrink-0">目前週次</span>
+                                    <select value={selectedWeek} onChange={(e) => setSelectedWeek(Number(e.target.value))} className="font-black text-xs text-[#967E6B] outline-none bg-transparent cursor-pointer">
+                                        {[...Array(12)].map((_, i) => <option key={i+1} value={i+1}>第 {String(i+1).padStart(2, '0')} 週</option>)}
                                     </select>
                                 </div>
                             </div>
 
                             {/* Main Table */}
-                            <div className="bg-white rounded-2xl shadow-sm border border-[#EAE2D5] overflow-hidden">
+                            <div className="bg-white rounded-[2rem] shadow-sm border border-[#EAE2D5] overflow-hidden">
                                 <div className="overflow-x-auto">
-                                    <table className="w-full text-left text-xs">
+                                    <table className="w-full text-left">
                                         <thead className="bg-[#FAF9F6] border-b border-[#EAE2D5]">
-                                            <tr className="text-[9px] font-black text-[#A69B8F] uppercase tracking-wider">
-                                                <th className="px-6 py-4">成員 / 目標</th>
-                                                <th className="px-2 py-4 text-center">W{selectedWeek} 任務 (單擊切換)</th>
-                                                <th className="px-2 py-4 text-center">加碼活動</th>
-                                                <th className="px-2 py-4 text-center">其他加碼</th>
-                                                <th className="px-2 py-4 text-center">本週總計</th>
-                                                <th className="px-4 py-4"></th>
+                                            <tr className="text-[9px] font-black text-[#A69B8F] uppercase tracking-[0.15em]">
+                                                <th className="px-8 py-4 w-1/4">成員 / 本週目標</th>
+                                                <th className="px-2 py-4 text-center">任務回報 (單擊打卡 / 雙擊附圖)</th>
+                                                <th className="px-4 py-4 text-center w-20">加碼幣</th>
+                                                <th className="px-6 py-4 text-center w-32">本週積分 / 購物金</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-[#F1EFE9]">
                                             {members.length === 0 ? (
-                                                <tr>
-                                                    <td colSpan="6" className="py-20 text-center text-[#CDC5BC] font-medium italic">
-                                                        目前尚無成員，請從上方新增。
-                                                    </td>
-                                                </tr>
+                                                <tr><td colSpan="4" className="py-24 text-center text-[#CDC5BC] font-medium italic text-xs">目前尚無成員紀錄。</td></tr>
                                             ) : (
                                                 members.map(m => {
                                                     const stats = calculateStats(m, selectedWeek);
                                                     const weekKey = `w${selectedWeek}`;
                                                     const days = m.weeks?.[weekKey] || Array(7).fill({ done: false, photo: false });
                                                     return (
-                                                        <tr key={m.id} className="hover:bg-[#FAF9F6]/50">
-                                                            <td className="px-6 py-4">
-                                                                <div className="font-black text-sm text-[#3D362F]">{m.name}</div>
-                                                                <input 
-                                                                    className="text-[11px] font-bold text-[#967E6B] mt-0.5 bg-transparent border-b border-transparent hover:border-[#CDC5BC]/30 focus:border-[#967E6B] outline-none w-full italic"
+                                                        <tr key={m.id} className="hover:bg-[#FAF9F6]/50 transition-colors group">
+                                                            <td className="px-8 py-5">
+                                                                <div className="flex items-center gap-2 mb-1">
+                                                                    <div className="font-black text-sm text-[#3D362F]">{m.name}</div>
+                                                                    <button onClick={() => setConfirmDelete(m.id)} className="opacity-0 group-hover:opacity-100 p-1 text-red-300 hover:text-red-500 transition-all rounded-lg">
+                                                                        <Icon name="trash" size={10} />
+                                                                    </button>
+                                                                </div>
+                                                                {/* 優化後的可編輯目標框 */}
+                                                                <EditableInput 
+                                                                    value={m.goals?.[weekKey] || ''} 
+                                                                    onSave={(val) => updateField(m.id, 'goals', val)}
                                                                     placeholder="點擊設定目標..."
-                                                                    value={m.goals?.[weekKey] || ''}
-                                                                    onChange={(e) => updateField(m.id, 'goals', e.target.value)}
+                                                                    className="text-[11px] font-medium text-[#967E6B] bg-transparent outline-none w-full placeholder:text-[#CDC5BC] italic"
                                                                 />
                                                             </td>
-                                                            <td className="px-2 py-4">
-                                                                <div className="flex justify-center gap-1">
+                                                            <td className="px-2 py-5">
+                                                                <div className="flex justify-center gap-1.5">
                                                                     {days.map((d, i) => (
-                                                                        <button 
-                                                                            key={i}
-                                                                            onClick={() => toggleDay(m.id, i)}
-                                                                            className={`w-7 h-7 rounded-lg font-black text-[10px] transition-all flex items-center justify-center border
-                                                                                ${d.photo ? 'bg-[#D4A373] text-white border-[#D4A373]' : 
-                                                                                  d.done ? 'bg-[#967E6B] text-white border-[#967E6B]' : 
-                                                                                  'bg-[#F1EFE9] text-[#A69B8F] border-transparent hover:border-[#CDC5BC]'}`}
-                                                                        >
+                                                                        <button key={i} onClick={() => toggleDay(m.id, i)} className={`w-8 h-8 rounded-xl font-black text-[10px] flex items-center justify-center border-2 transition-all shadow-sm ${d.photo ? 'bg-[#D4A373] text-white border-[#D4A373]' : d.done ? 'bg-[#967E6B] text-white border-[#967E6B]' : 'bg-white text-[#CDC5BC] border-[#F1EFE9] hover:border-[#EAE2D5]'}`}>
                                                                             {i + 1}
                                                                         </button>
                                                                     ))}
                                                                 </div>
                                                             </td>
-                                                            <td className="px-2 py-4 text-center">
-                                                                <input 
+                                                            <td className="px-4 py-5 text-center">
+                                                                <EditableInput 
                                                                     type="number"
-                                                                    value={m.bonus?.[weekKey] || 0}
-                                                                    onChange={(e) => updateField(m.id, 'bonus', e.target.value)}
-                                                                    className="w-12 h-8 bg-[#F8F7F4] rounded-lg text-center font-black text-[#5C8AE6] outline-none border border-transparent focus:border-[#5C8AE6]/20"
+                                                                    value={m.bonus?.[weekKey] || 0} 
+                                                                    onSave={(val) => updateField(m.id, 'bonus', val)}
+                                                                    className="w-12 h-8 bg-[#F8F7F4] rounded-xl text-center font-black text-[#5C8AE6] outline-none text-xs border border-transparent focus:border-[#5C8AE6]/20"
                                                                 />
                                                             </td>
-                                                            <td className="px-2 py-4 text-center">
-                                                                <input 
-                                                                    type="number"
-                                                                    value={m.other?.[weekKey] || 0}
-                                                                    onChange={(e) => updateField(m.id, 'other', e.target.value)}
-                                                                    className="w-12 h-8 bg-[#F8F7F4] rounded-lg text-center font-black text-[#3D362F] outline-none border border-transparent focus:border-[#CDC5BC]/30"
-                                                                />
-                                                            </td>
-                                                            <td className="px-2 py-4 text-center">
-                                                                <div className="font-black text-base text-[#3D362F]">{stats.coins}</div>
-                                                                <div className="text-[9px] font-bold text-[#D4A373] tracking-tight">${stats.cash.toFixed(1)}</div>
-                                                            </td>
-                                                            <td className="px-4 py-4 text-right">
-                                                                <button 
-                                                                    onClick={() => setMembers(members.filter(mem => mem.id !== m.id))}
-                                                                    className="text-[#CDC5BC] hover:text-red-400 p-1"
-                                                                >
-                                                                    <Icon name="trash" size={12} />
-                                                                </button>
+                                                            <td className="px-6 py-5 text-center">
+                                                                <div className="font-black text-base text-[#3D362F] leading-tight">{stats.coins}</div>
+                                                                <div className="text-[10px] font-black text-[#D4A373] uppercase tracking-tighter">Gold: ${stats.cash}</div>
                                                             </td>
                                                         </tr>
                                                     );
@@ -265,79 +351,34 @@
                                     </table>
                                 </div>
                             </div>
-
-                            {/* Rules Card */}
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div className="bg-white p-5 rounded-2xl border border-[#EAE2D5] shadow-sm">
-                                    <div className="flex items-center gap-2 mb-3 text-[#A69B8F]">
-                                        <Icon name="info" size={12} />
-                                        <h4 className="text-[9px] font-black uppercase tracking-widest">任務計分規則</h4>
-                                    </div>
-                                    <ul className="space-y-2 text-[11px] font-bold text-[#5C5246]">
-                                        <li className="flex justify-between"><span>任務 3 / 5 / 7 天</span><span className="text-[#967E6B]">+30 / 60 / 90 幣</span></li>
-                                        <li className="flex justify-between"><span>附圖滿 3 天</span><span className="text-[#D4A373]">+50 幣</span></li>
-                                        <li className="flex justify-between"><span>附圖滿 7 天</span><span className="text-[#D4A373]">+100 幣</span></li>
-                                    </ul>
-                                </div>
-                                <div className="bg-white p-5 rounded-2xl border border-[#EAE2D5] flex items-center justify-center text-center italic font-bold text-[13px] text-[#967E6B] leading-snug shadow-sm">
-                                    「每一點能量累積，<br/>都讓未來的你更有底氣。」
-                                </div>
-                                <div className="bg-[#967E6B]/5 p-5 rounded-2xl border border-[#967E6B]/10 relative overflow-hidden group">
-                                    <h4 className="text-xs font-black text-[#967E6B] mb-1.5">狀態說明</h4>
-                                    <p className="text-[10px] font-bold text-[#7C7267] leading-relaxed">
-                                        <span className="text-[#A69B8F]">灰(無)</span> → 
-                                        <span className="text-[#967E6B]"> 褐(完成)</span> → 
-                                        <span className="text-[#D4A373]"> 橘(附圖)</span><br/>
-                                        積分與獎金換算比為 10 : 1
-                                    </p>
-                                    <div className="absolute right-[-5%] bottom-[-10%] text-5xl font-black text-[#967E6B] opacity-5 italic">SC</div>
-                                </div>
-                            </div>
                         </div>
                     ) : (
-                        /* Leaderboard View */
-                        <div className="space-y-3 max-w-xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        /* 排行榜 */
+                        <div className="space-y-4 max-w-2xl mx-auto pb-12">
                             <div className="text-center py-4">
-                                <h2 className="text-xl font-black text-[#3D362F]">能量累積排行榜</h2>
-                                <p className="text-[9px] text-[#A69B8F] font-bold tracking-[0.2em] uppercase mt-0.5">Top Accumulators</p>
+                                <h2 className="text-lg font-black text-[#3D362F] tracking-tight">能量累積總排行</h2>
+                                <p className="text-[9px] font-bold text-[#A69B8F] uppercase tracking-widest mt-1">Global Hall of Fame</p>
                             </div>
-                            
-                            {rankingList.length === 0 ? (
-                                <div className="text-center py-20 text-[#CDC5BC] font-bold italic">尚無數據</div>
-                            ) : (
-                                rankingList.map((m, idx) => (
-                                    <div key={m.id} className="bg-white rounded-2xl p-4 shadow-sm border border-[#EAE2D5] flex items-center gap-4 group hover:border-[#D4A373] transition-all">
-                                        {/* Rank Number */}
-                                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-base font-black shrink-0 shadow-inner
-                                            ${idx === 0 ? 'bg-yellow-400 text-white' : idx === 1 ? 'bg-slate-300 text-white' : idx === 2 ? 'bg-[#D4A373] text-white' : 'bg-[#F8F7F4] text-[#A69B8F]'}`}>
-                                            {idx + 1}
-                                        </div>
-
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <h3 className="text-base font-black text-[#3D362F] truncate">{m.name}</h3>
-                                                {idx === 0 && (
-                                                    <span className="bg-[#FAF3E0] text-[#D4A373] text-[8px] px-1.5 py-0.5 rounded-md font-black border border-[#D4A373]/20 flex items-center gap-1">
-                                                        <Icon name="sparkles" size={8} /> 首席
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <div className="bg-[#FAF9F6] px-2 py-1.5 rounded-lg border border-[#F1EFE9] text-[10px] font-medium text-[#7C7267] truncate italic">
-                                                「{m.goals?.[`w${selectedWeek}`] || "持之以恆，便是力量"}」
-                                            </div>
-                                        </div>
-
-                                        {/* Total Section */}
-                                        <div className="bg-[#967E6B] text-white w-24 h-20 rounded-xl flex flex-col items-center justify-center shadow-md shrink-0">
-                                            <span className="text-xl font-black leading-none">{m.grandTotal}</span>
-                                            <p className="text-[8px] font-black opacity-60 uppercase mt-1">Total Score</p>
-                                            <div className="mt-1.5 pt-1.5 border-t border-white/20 w-16 text-center">
-                                                <p className="text-[9px] font-black text-yellow-200">${(m.grandTotal / 10).toFixed(0)} <span className="text-[7px] opacity-70">購物金</span></p>
-                                            </div>
+                            {rankingList.map((m, idx) => (
+                                <div key={m.id} className="bg-white rounded-[1.5rem] p-5 shadow-sm border border-[#EAE2D5] flex items-center gap-6 group hover:shadow-md transition-all">
+                                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-lg font-black shrink-0 shadow-inner ${idx === 0 ? 'bg-yellow-400 text-white' : idx === 1 ? 'bg-[#C0C0C0] text-white' : idx === 2 ? 'bg-[#CD7F32] text-white' : 'bg-[#F8F7F4] text-[#CDC5BC]'}`}>
+                                        {idx + 1}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <h3 className="text-sm font-black text-[#3D362F] truncate">{m.name}</h3>
+                                        <div className="text-[10px] font-medium text-[#7C7267] truncate italic mt-0.5 opacity-70">
+                                            {m.goals?.[`w${selectedWeek}`] || "正在努力累積能量中..."}
                                         </div>
                                     </div>
-                                ))
-                            )}
+                                    <div className="bg-[#FAF9F6] px-6 py-3 rounded-2xl border border-[#F1EFE9] flex flex-col items-center justify-center shrink-0 min-w-[110px]">
+                                        <span className="text-lg font-black text-[#3D362F]">{m.grandTotal}</span>
+                                        <div className="w-8 h-0.5 bg-[#967E6B]/20 my-1"></div>
+                                        <p className="text-[10px] font-black text-[#D4A373] tracking-tighter">
+                                            NT$ <span className="text-xs">{Math.floor(m.grandTotal / 10)}</span>
+                                        </p>
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     )}
                 </div>
