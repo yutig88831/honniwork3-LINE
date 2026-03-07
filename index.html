@@ -1,372 +1,351 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, doc, onSnapshot, updateDoc, addDoc, deleteDoc, query } from 'firebase/firestore';
-import { Trash2, Trophy, Target, LayoutGrid, Settings2, Sparkles, ChevronRight, Plus } from 'lucide-react';
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>安心小宇宙 - 能量累積計畫</title>
+    <!-- 載入框架與樣式庫 -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #F8F7F4; color: #4A443F; font-size: 14px; }
+        .custom-shadow { box-shadow: 0 10px 30px -5px rgba(150, 126, 107, 0.1); }
+        input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .tab-btn { transition: all 0.2s ease; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
 
-// --- Firebase 配置 ---
-const firebaseConfig = JSON.parse(__firebase_config);
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'cosmic-energy-system';
+    <script type="text/babel">
+        const { useState, useMemo } = React;
+        
+        // --- 圖示組件 ---
+        const Icon = ({ name, size = 14, className = "" }) => {
+            const icons = {
+                layout: <path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z" />,
+                trophy: <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 14.66V17c0 .55.47.98.97 1.21C11.47 18.44 12 19 12 19s.53-.56 1.03-.79c.5-.23.97-.66.97-1.21v-2.34c0-3.61-2-5.66-2-5.66s-2 2.05-2 5.66z" />,
+                plus: <path d="M12 5v14M5 12h14" />,
+                trash: <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6" />,
+                info: (
+                    <g>
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="16" x2="12" y2="12"/>
+                        <line x1="12" y1="8" x2="12.01" y2="8"/>
+                    </g>
+                ),
+                sparkles: <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
+            };
+            return (
+                <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+                    {icons[name]}
+                </svg>
+            );
+        };
 
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [members, setMembers] = useState([]);
-  const [selectedWeek, setSelectedWeek] = useState(1);
-  const [newMemberName, setNewMemberName] = useState('');
-  const [activeTab, setActiveTab] = useState('management'); // 'management' 或 'leaderboard'
+        function App() {
+            const [activeTab, setActiveTab] = useState('management');
+            const [selectedWeek, setSelectedWeek] = useState(1);
+            const [newName, setNewName] = useState('');
+            const [members, setMembers] = useState([]); // 取消範例名單
 
-  // 1. 初始化驗證 (依照 Rule 3)
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error("Auth Error:", err);
-      }
-    };
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
-    return () => unsubscribe();
-  }, []);
+            // --- 核心計分邏輯更新 ---
+            const calculateStats = (member, week) => {
+                const weekKey = `w${week}`;
+                const days = member.weeks?.[weekKey] || Array(7).fill({ done: false, photo: false });
+                const doneCount = days.filter(d => d.done).length;
+                const photoCount = days.filter(d => d.photo).length;
 
-  // 2. 監聽 Firestore 數據 (依照 Rule 1 & 2)
-  useEffect(() => {
-    if (!user) return;
-    const q = collection(db, 'artifacts', appId, 'public', 'data', 'members');
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setMembers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (err) => {
-      console.error("Firestore Error:", err);
-    });
-    return () => unsubscribe();
-  }, [user]);
+                let taskCoins = 0;
+                // 打卡獎勵：3/5/7天 -> 30/60/90
+                if (doneCount >= 7) taskCoins = 90;
+                else if (doneCount >= 5) taskCoins = 60;
+                else if (doneCount >= 3) taskCoins = 30;
 
-  // --- 計算邏輯 ---
-  const calculateStats = (member, week) => {
-    const weekKey = `w${week}`;
-    const days = member.weeks?.[weekKey] || Array(7).fill({ done: false, photo: false });
-    const doneCount = days.filter(d => d.done).length;
-    const photoCount = days.filter(d => d.photo).length;
+                // 附圖獎勵：滿3天+50，滿7天+100
+                if (photoCount >= 7) taskCoins += 100;
+                else if (photoCount >= 3) taskCoins += 50;
 
-    let taskCoins = 0;
-    if (doneCount >= 7) taskCoins = 90;
-    else if (doneCount >= 5) taskCoins = 60;
-    else if (doneCount >= 3) taskCoins = 30;
+                const bonus = Number(member.bonus?.[weekKey] || 0);
+                const other = Number(member.other?.[weekKey] || 0);
+                
+                const total = taskCoins + bonus + other;
+                return { 
+                    coins: total,
+                    cash: total / 10
+                };
+            };
 
-    // 加碼規則
-    if (photoCount >= 3) taskCoins += 50;
-    if (doneCount >= 7) taskCoins += 100;
-
-    const bonus = member.bonus?.[weekKey] || 0;
-    const other = member.other?.[weekKey] || 0;
-
-    return { taskCoins, total: taskCoins + bonus + other };
-  };
-
-  const getGrandTotal = (member) => {
-    let total = 0;
-    for (let w = 1; w <= 12; w++) {
-      total += calculateStats(member, w).total;
-    }
-    return total;
-  };
-
-  const rankingList = useMemo(() => {
-    return [...members]
-      .map(m => ({ ...m, grandTotal: getGrandTotal(m) }))
-      .sort((a, b) => b.grandTotal - a.grandTotal);
-  }, [members]);
-
-  // --- 資料操作 ---
-  const handleAddMember = async () => {
-    if (!newMemberName.trim()) return;
-    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'members'), {
-      name: newMemberName,
-      weeks: {}, bonus: {}, other: {}, goals: {},
-      createdAt: Date.now()
-    });
-    setNewMemberName('');
-  };
-
-  const toggleDayStatus = async (member, dayIdx) => {
-    const weekKey = `w${selectedWeek}`;
-    const currentWeeks = { ...member.weeks };
-    if (!currentWeeks[weekKey]) currentWeeks[weekKey] = Array(7).fill({ done: false, photo: false });
-
-    const day = { ...currentWeeks[weekKey][dayIdx] };
-    // 循環切換：無 -> 達成 -> 附圖 -> 無
-    if (!day.done) { day.done = true; day.photo = false; }
-    else if (day.done && !day.photo) { day.photo = true; }
-    else { day.done = false; day.photo = false; }
-
-    currentWeeks[weekKey][dayIdx] = day;
-    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'members', member.id), { weeks: currentWeeks });
-  };
-
-  const updateGoal = async (id, goalText) => {
-    const weekKey = `w${selectedWeek}`;
-    const member = members.find(m => m.id === id);
-    const goals = { ...member.goals, [weekKey]: goalText };
-    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'members', id), { goals });
-  };
-
-  const updateNumeric = async (id, field, value) => {
-    const weekKey = `w${selectedWeek}`;
-    const member = members.find(m => m.id === id);
-    const data = { ...member[field], [weekKey]: parseInt(value) || 0 };
-    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'members', id), { [field]: data });
-  };
-
-  return (
-    <div className="min-h-screen bg-[#F8F7F4] text-[#4A443F] font-sans p-4 md:p-8">
-      {/* Header Area */}
-      <div className="max-w-6xl mx-auto mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-        <div>
-          <h1 className="text-3xl font-black tracking-tight text-[#3D362F]">安心小宇宙 <span className="font-light text-[#A69B8F]">|</span> <span className="text-[#967E6B]">能量累積計畫</span></h1>
-          <p className="text-sm font-bold text-[#A69B8F] mt-1 tracking-widest uppercase">Cosmic Growth Management Center</p>
-        </div>
-
-        <div className="flex bg-white p-1.5 rounded-2xl shadow-sm border border-[#EAE2D5]">
-          <button 
-            onClick={() => setActiveTab('management')}
-            className={`flex items-center gap-2 px-6 py-2 rounded-xl text-sm font-black transition-all ${activeTab === 'management' ? 'bg-[#967E6B] text-white shadow-md' : 'text-[#A69B8F] hover:bg-[#F8F7F4]'}`}
-          >
-            <LayoutGrid size={16} /> 數據管理
-          </button>
-          <button 
-            onClick={() => setActiveTab('leaderboard')}
-            className={`flex items-center gap-2 px-6 py-2 rounded-xl text-sm font-black transition-all ${activeTab === 'leaderboard' ? 'bg-[#3D362F] text-white shadow-md' : 'text-[#A69B8F] hover:bg-[#F8F7F4]'}`}
-          >
-            <Trophy size={16} /> 累積排行榜
-          </button>
-        </div>
-      </div>
-
-      <div className="max-w-6xl mx-auto">
-        {activeTab === 'management' ? (
-          <div className="space-y-6 animate-in fade-in duration-500">
-            {/* Top Bar for Management */}
-            <div className="flex flex-col md:flex-row gap-4 justify-between items-stretch">
-              <div className="bg-white flex-1 flex rounded-2xl shadow-sm border border-[#EAE2D5] overflow-hidden focus-within:ring-2 ring-[#967E6B]/20">
-                <input 
-                  value={newMemberName}
-                  onChange={(e) => setNewMemberName(e.target.value)}
-                  placeholder="輸入新成員姓名..."
-                  className="flex-1 px-6 py-3 outline-none font-bold text-[#5C5246]"
-                />
-                <button onClick={handleAddMember} className="bg-[#967E6B] text-white px-8 font-black flex items-center gap-2 hover:bg-[#826d5c] transition-colors">
-                  <Plus size={18} /> 新增
-                </button>
-              </div>
-
-              <div className="bg-white px-6 py-3 rounded-2xl shadow-sm border border-[#EAE2D5] flex items-center gap-4">
-                <span className="text-xs font-black text-[#A69B8F] uppercase tracking-tighter">當前週次</span>
-                <select 
-                  value={selectedWeek} 
-                  onChange={(e) => setSelectedWeek(Number(e.target.value))}
-                  className="bg-[#F8F7F4] font-black text-[#967E6B] px-4 py-1.5 rounded-xl outline-none border border-[#EAE2D5]"
-                >
-                  {[...Array(12)].map((_, i) => <option key={i+1} value={i+1}>第 {i+1} 週</option>)}
-                </select>
-              </div>
-            </div>
-
-            {/* Matrix Table */}
-            <div className="bg-white rounded-[2rem] shadow-sm border border-[#EAE2D5] overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="bg-[#FAF9F6] border-b border-[#EAE2D5]">
-                      <th className="px-8 py-5 text-left text-[11px] font-black text-[#A69B8F] uppercase tracking-widest">成員 / 本週目標</th>
-                      <th className="px-4 py-5 text-center text-[11px] font-black text-[#A69B8F] uppercase tracking-widest">W{selectedWeek} 任務回報 (單擊切換)</th>
-                      <th className="px-4 py-5 text-center text-[11px] font-black text-[#A69B8F] uppercase tracking-widest">加碼活動</th>
-                      <th className="px-4 py-5 text-center text-[11px] font-black text-[#A69B8F] uppercase tracking-widest">其他加碼</th>
-                      <th className="px-8 py-5 text-right text-[11px] font-black text-[#A69B8F] uppercase tracking-widest">總計 / 獎金</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#F1EFE9]">
-                    {members.map(m => {
-                      const stats = calculateStats(m, selectedWeek);
-                      const weekKey = `w${selectedWeek}`;
-                      const days = m.weeks?.[weekKey] || Array(7).fill({ done: false, photo: false });
-                      return (
-                        <tr key={m.id} className="hover:bg-[#FAF9F6] transition-colors group">
-                          <td className="px-8 py-6">
-                            <div className="font-black text-xl text-[#3D362F] mb-1">{m.name}</div>
-                            <input 
-                              defaultValue={m.goals?.[weekKey] || ""}
-                              onBlur={(e) => updateGoal(m.id, e.target.value)}
-                              placeholder="點擊設定本週目標..."
-                              className="text-xs font-bold text-[#967E6B] bg-transparent outline-none w-full placeholder:text-[#D1C9BE]"
-                            />
-                          </td>
-                          <td className="px-4 py-6">
-                            <div className="flex justify-center gap-1.5">
-                              {days.map((d, i) => (
-                                <button 
-                                  key={i}
-                                  onClick={() => toggleDayStatus(m, i)}
-                                  className={`w-9 h-9 rounded-xl font-black text-xs transition-all shadow-sm flex items-center justify-center
-                                    ${d.photo ? 'bg-[#D4A373] text-white scale-110' : d.done ? 'bg-[#967E6B] text-white' : 'bg-[#F1EFE9] text-[#A69B8F]'}`}
-                                >
-                                  {i + 1}
-                                </button>
-                              ))}
-                            </div>
-                          </td>
-                          <td className="px-4 py-6 text-center">
-                            <input 
-                              type="number"
-                              value={m.bonus?.[weekKey] || 0}
-                              onChange={(e) => updateNumeric(m.id, 'bonus', e.target.value)}
-                              className="w-16 bg-[#F8F7F4] rounded-xl py-2 text-center font-black text-[#967E6B] border border-transparent focus:border-[#EAE2D5] outline-none"
-                            />
-                          </td>
-                          <td className="px-4 py-6 text-center">
-                            <input 
-                              type="number"
-                              value={m.other?.[weekKey] || 0}
-                              onChange={(e) => updateNumeric(m.id, 'other', e.target.value)}
-                              className="w-16 bg-[#F8F7F4] rounded-xl py-2 text-center font-black text-[#D4A373] border border-transparent focus:border-[#EAE2D5] outline-none"
-                            />
-                          </td>
-                          <td className="px-8 py-6 text-right">
-                            <div className="flex flex-col items-end">
-                              <span className="text-2xl font-black text-[#3D362F] leading-none">{stats.total}</span>
-                              <span className="text-[11px] font-black text-[#D4A373] mt-1">${(stats.total/10).toFixed(1)}</span>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Bottom Info Panels */}
-            <div className="grid md:grid-cols-2 gap-6">
-              <div className="bg-white p-8 rounded-[2rem] border border-[#EAE2D5] shadow-sm relative overflow-hidden">
-                <h4 className="text-[11px] font-black text-[#A69B8F] uppercase tracking-widest mb-4">任務計分規則 (更新版)</h4>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm font-bold border-b border-dotted pb-1"><span>滿 3 天任務</span><span className="text-[#967E6B]">+30 幣</span></div>
-                  <div className="flex justify-between text-sm font-bold border-b border-dotted pb-1"><span>滿 5 天任務</span><span className="text-[#967E6B]">+60 幣</span></div>
-                  <div className="flex justify-between text-sm font-bold border-b border-dotted pb-1"><span>滿 7 天任務</span><span className="text-[#967E6B]">+90 幣</span></div>
-                  <div className="flex justify-between text-sm font-black pt-2 text-[#D4A373]"><span>滿 3 天附圖回報額外獲得</span><span>+50 幣</span></div>
-                  <div className="flex justify-between text-sm font-black text-yellow-600"><span>單週全勤 (滿7天) 獎勵</span><span>+100 幣</span></div>
-                </div>
-              </div>
-              <div className="bg-[#967E6B] p-8 rounded-[2rem] text-white shadow-xl relative overflow-hidden">
-                <div className="relative z-10 h-full flex flex-col justify-between">
-                  <div>
-                    <h4 className="text-[11px] font-black opacity-60 uppercase tracking-widest mb-4">系統提示</h4>
-                    <p className="font-bold text-lg leading-snug">點擊日期按鈕切換狀態：<br/>灰 (無紀錄) → 褐 (已打卡) → 橘 (附圖)</p>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-5xl font-black opacity-20 italic">10:1</span>
-                    <p className="text-[10px] font-black opacity-60 uppercase">Coin-to-Cash Ratio</p>
-                  </div>
-                </div>
-                <div className="absolute top-[-10%] right-[-10%] w-48 h-48 bg-white/5 rounded-full blur-3xl"></div>
-              </div>
-            </div>
-          </div>
-        ) : (
-          /* Leaderboard Tab */
-          <div className="animate-in slide-in-from-bottom-6 duration-700 space-y-6">
-            <div className="text-center mb-10">
-              <h2 className="text-4xl font-black text-[#3D362F] tracking-tighter mb-2">開運幣累積排行榜</h2>
-              <p className="text-[#A69B8F] text-xs font-bold uppercase tracking-[0.4em]">Cumulative Expedition Standings</p>
-            </div>
-
-            <div className="space-y-6">
-              {rankingList.map((m, idx) => (
-                <div key={m.id} className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-[#EAE2D5] flex flex-col md:flex-row items-center gap-8 group hover:shadow-2xl hover:border-[#D4A373] transition-all relative overflow-hidden">
-                  {/* Rank Badge */}
-                  <div className="relative shrink-0">
-                    <div className={`w-20 h-20 rounded-[2.5rem] flex items-center justify-center text-3xl font-black shadow-inner
-                      ${idx === 0 ? 'bg-yellow-400 text-white ring-8 ring-yellow-50' : 
-                        idx === 1 ? 'bg-slate-300 text-white ring-8 ring-slate-50' : 
-                        idx === 2 ? 'bg-[#D4A373] text-white ring-8 ring-[#D4A373]/5' : 
-                        'bg-[#F8F7F4] text-[#A69B8F]'}`}>
-                      {idx + 1}
-                    </div>
-                  </div>
-
-                  {/* Member Bio */}
-                  <div className="flex-1 text-center md:text-left">
-                    <div className="flex flex-col md:flex-row items-center gap-4 mb-4">
-                      <h3 className="text-3xl font-black text-[#3D362F]">{m.name}</h3>
-                      {idx === 0 && (
-                        <span className="bg-[#FAF3E0] text-[#D4A373] text-[10px] px-4 py-1 rounded-full font-black border border-[#F1E4C1] flex items-center gap-2">
-                          <Sparkles size={12} /> 宇宙首席
-                        </span>
-                      )}
-                    </div>
+            const toggleDay = (mId, dayIdx) => {
+                setMembers(prev => prev.map(m => {
+                    if (m.id !== mId) return m;
+                    const weekKey = `w${selectedWeek}`;
+                    const currentWeeks = { ...m.weeks };
+                    if (!currentWeeks[weekKey]) currentWeeks[weekKey] = Array(7).fill({ done: false, photo: false });
                     
-                    {/* Two-Line Goals/Summary */}
-                    <div className="bg-[#FAF9F6] p-5 rounded-[2rem] border border-[#F1EFE9] relative">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Quote size={14} className="text-[#D1C9BE]" />
-                        <span className="text-[10px] font-black text-[#A69B8F] uppercase tracking-widest">WEEK {selectedWeek} GOAL</span>
-                      </div>
-                      <p className="text-lg font-black italic text-[#5C5246]">
-                        {m.goals?.[`w${selectedWeek}`] || "專注當下，探索無限可能"}
-                      </p>
+                    const day = { ...currentWeeks[weekKey][dayIdx] };
+                    if (!day.done) { day.done = true; day.photo = false; }
+                    else if (day.done && !day.photo) { day.photo = true; }
+                    else { day.done = false; day.photo = false; }
+                    
+                    currentWeeks[weekKey][dayIdx] = day;
+                    return { ...m, weeks: currentWeeks };
+                }));
+            };
+
+            const updateField = (mId, field, value) => {
+                setMembers(prev => prev.map(m => {
+                    if (m.id !== mId) return m;
+                    const weekKey = `w${selectedWeek}`;
+                    return { ...m, [field]: { ...m[field], [weekKey]: value } };
+                }));
+            };
+
+            const rankingList = useMemo(() => {
+                return [...members].map(m => {
+                    let total = 0;
+                    for(let i=1; i<=12; i++) total += calculateStats(m, i).coins;
+                    return { ...m, grandTotal: total };
+                }).sort((a, b) => b.grandTotal - a.grandTotal);
+            }, [members]);
+
+            return (
+                <div className="min-h-screen p-4 md:p-6 max-w-6xl mx-auto">
+                    {/* Header */}
+                    <div className="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div>
+                            <h1 className="text-2xl font-black text-[#3D362F] tracking-tight">
+                                安心小宇宙 <span className="text-[#967E6B] font-medium opacity-60">| 能量計畫</span>
+                            </h1>
+                            <p className="text-[9px] font-black text-[#A69B8F] tracking-[0.2em] uppercase mt-0.5">
+                                {activeTab === 'management' ? 'Management' : 'Leaderboard'}
+                            </p>
+                        </div>
+
+                        <div className="flex bg-white p-1 rounded-xl shadow-sm border border-[#EAE2D5]">
+                            <button 
+                                onClick={() => setActiveTab('management')}
+                                className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold tab-btn ${activeTab === 'management' ? 'bg-[#967E6B] text-white' : 'text-[#A69B8F]'}`}
+                            >
+                                <Icon name="layout" size={12} /> 數據管理
+                            </button>
+                            <button 
+                                onClick={() => setActiveTab('leaderboard')}
+                                className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold tab-btn ${activeTab === 'leaderboard' ? 'bg-[#3D362F] text-white' : 'text-[#A69B8F]'}`}
+                            >
+                                <Icon name="trophy" size={12} /> 累積排行榜
+                            </button>
+                        </div>
                     </div>
 
-                    <div className="mt-4 flex items-center justify-center md:justify-start gap-6 text-[#A69B8F]">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-[#967E6B]"></div>
-                        <span className="text-xs font-bold">累積能量穩定增長</span>
-                      </div>
-                    </div>
-                  </div>
+                    {activeTab === 'management' ? (
+                        <div className="space-y-4">
+                            {/* Input Bar */}
+                            <div className="flex flex-col md:flex-row gap-3">
+                                <div className="bg-white flex-1 flex rounded-xl shadow-sm border border-[#EAE2D5] overflow-hidden focus-within:ring-1 ring-[#967E6B]/30 transition-all">
+                                    <input 
+                                        value={newName}
+                                        onChange={(e) => setNewName(e.target.value)}
+                                        placeholder="輸入新成員姓名..."
+                                        className="flex-1 px-4 py-2.5 outline-none font-bold text-sm text-[#3D362F] placeholder:text-[#CDC5BC] placeholder:font-normal"
+                                        onKeyPress={(e) => e.key === 'Enter' && (newName && (setMembers([...members, { id: Date.now().toString(), name: newName, weeks: {}, goals: {}, bonus: {}, other: {} }]), setNewName('')))}
+                                    />
+                                    <button 
+                                        onClick={() => {
+                                            if(newName) setMembers([...members, { id: Date.now().toString(), name: newName, weeks: {}, goals: {}, bonus: {}, other: {} }]);
+                                            setNewName('');
+                                        }}
+                                        className="bg-[#967E6B] text-white px-6 text-xs font-black flex items-center gap-1.5 hover:bg-[#826d5c]"
+                                    >
+                                        <Icon name="plus" size={12} /> 新增
+                                    </button>
+                                </div>
+                                <div className="bg-white px-4 py-2 rounded-xl shadow-sm border border-[#EAE2D5] flex items-center gap-3">
+                                    <span className="text-[9px] font-black text-[#A69B8F] uppercase tracking-wider">週次</span>
+                                    <select 
+                                        value={selectedWeek} 
+                                        onChange={(e) => setSelectedWeek(Number(e.target.value))}
+                                        className="font-black text-sm text-[#967E6B] outline-none bg-transparent"
+                                    >
+                                        {[...Array(12)].map((_, i) => <option key={i+1} value={i+1}>第 {i+1} 週</option>)}
+                                    </select>
+                                </div>
+                            </div>
 
-                  {/* Score Block */}
-                  <div className="shrink-0 w-full md:w-44 h-32 bg-[#967E6B] rounded-[2.5rem] flex flex-col items-center justify-center text-white shadow-lg relative overflow-hidden">
-                    <div className="relative z-10 text-center">
-                      <span className="text-4xl font-black leading-none">{m.grandTotal}</span>
-                      <p className="text-[10px] font-black opacity-60 uppercase tracking-widest mt-1">Total Score</p>
-                    </div>
-                    <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent"></div>
-                  </div>
+                            {/* Main Table */}
+                            <div className="bg-white rounded-2xl shadow-sm border border-[#EAE2D5] overflow-hidden">
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left text-xs">
+                                        <thead className="bg-[#FAF9F6] border-b border-[#EAE2D5]">
+                                            <tr className="text-[9px] font-black text-[#A69B8F] uppercase tracking-wider">
+                                                <th className="px-6 py-4">成員 / 目標</th>
+                                                <th className="px-2 py-4 text-center">W{selectedWeek} 任務 (單擊切換)</th>
+                                                <th className="px-2 py-4 text-center">加碼活動</th>
+                                                <th className="px-2 py-4 text-center">其他加碼</th>
+                                                <th className="px-2 py-4 text-center">本週總計</th>
+                                                <th className="px-4 py-4"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-[#F1EFE9]">
+                                            {members.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan="6" className="py-20 text-center text-[#CDC5BC] font-medium italic">
+                                                        目前尚無成員，請從上方新增。
+                                                    </td>
+                                                </tr>
+                                            ) : (
+                                                members.map(m => {
+                                                    const stats = calculateStats(m, selectedWeek);
+                                                    const weekKey = `w${selectedWeek}`;
+                                                    const days = m.weeks?.[weekKey] || Array(7).fill({ done: false, photo: false });
+                                                    return (
+                                                        <tr key={m.id} className="hover:bg-[#FAF9F6]/50">
+                                                            <td className="px-6 py-4">
+                                                                <div className="font-black text-sm text-[#3D362F]">{m.name}</div>
+                                                                <input 
+                                                                    className="text-[11px] font-bold text-[#967E6B] mt-0.5 bg-transparent border-b border-transparent hover:border-[#CDC5BC]/30 focus:border-[#967E6B] outline-none w-full italic"
+                                                                    placeholder="點擊設定目標..."
+                                                                    value={m.goals?.[weekKey] || ''}
+                                                                    onChange={(e) => updateField(m.id, 'goals', e.target.value)}
+                                                                />
+                                                            </td>
+                                                            <td className="px-2 py-4">
+                                                                <div className="flex justify-center gap-1">
+                                                                    {days.map((d, i) => (
+                                                                        <button 
+                                                                            key={i}
+                                                                            onClick={() => toggleDay(m.id, i)}
+                                                                            className={`w-7 h-7 rounded-lg font-black text-[10px] transition-all flex items-center justify-center border
+                                                                                ${d.photo ? 'bg-[#D4A373] text-white border-[#D4A373]' : 
+                                                                                  d.done ? 'bg-[#967E6B] text-white border-[#967E6B]' : 
+                                                                                  'bg-[#F1EFE9] text-[#A69B8F] border-transparent hover:border-[#CDC5BC]'}`}
+                                                                        >
+                                                                            {i + 1}
+                                                                        </button>
+                                                                    ))}
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-2 py-4 text-center">
+                                                                <input 
+                                                                    type="number"
+                                                                    value={m.bonus?.[weekKey] || 0}
+                                                                    onChange={(e) => updateField(m.id, 'bonus', e.target.value)}
+                                                                    className="w-12 h-8 bg-[#F8F7F4] rounded-lg text-center font-black text-[#5C8AE6] outline-none border border-transparent focus:border-[#5C8AE6]/20"
+                                                                />
+                                                            </td>
+                                                            <td className="px-2 py-4 text-center">
+                                                                <input 
+                                                                    type="number"
+                                                                    value={m.other?.[weekKey] || 0}
+                                                                    onChange={(e) => updateField(m.id, 'other', e.target.value)}
+                                                                    className="w-12 h-8 bg-[#F8F7F4] rounded-lg text-center font-black text-[#3D362F] outline-none border border-transparent focus:border-[#CDC5BC]/30"
+                                                                />
+                                                            </td>
+                                                            <td className="px-2 py-4 text-center">
+                                                                <div className="font-black text-base text-[#3D362F]">{stats.coins}</div>
+                                                                <div className="text-[9px] font-bold text-[#D4A373] tracking-tight">${stats.cash.toFixed(1)}</div>
+                                                            </td>
+                                                            <td className="px-4 py-4 text-right">
+                                                                <button 
+                                                                    onClick={() => setMembers(members.filter(mem => mem.id !== m.id))}
+                                                                    className="text-[#CDC5BC] hover:text-red-400 p-1"
+                                                                >
+                                                                    <Icon name="trash" size={12} />
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
 
-                  {/* Cash Summary Footer */}
-                  <div className="absolute bottom-6 left-8 right-8 flex justify-between items-center opacity-0 group-hover:opacity-100 transition-opacity">
-                    <span className="text-[10px] font-black text-[#A69B8F] uppercase tracking-widest">Estimated Cash</span>
-                    <span className="font-black text-[#D4A373]">${(m.grandTotal/10).toFixed(1)}</span>
-                  </div>
+                            {/* Rules Card */}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="bg-white p-5 rounded-2xl border border-[#EAE2D5] shadow-sm">
+                                    <div className="flex items-center gap-2 mb-3 text-[#A69B8F]">
+                                        <Icon name="info" size={12} />
+                                        <h4 className="text-[9px] font-black uppercase tracking-widest">任務計分規則</h4>
+                                    </div>
+                                    <ul className="space-y-2 text-[11px] font-bold text-[#5C5246]">
+                                        <li className="flex justify-between"><span>任務 3 / 5 / 7 天</span><span className="text-[#967E6B]">+30 / 60 / 90 幣</span></li>
+                                        <li className="flex justify-between"><span>附圖滿 3 天</span><span className="text-[#D4A373]">+50 幣</span></li>
+                                        <li className="flex justify-between"><span>附圖滿 7 天</span><span className="text-[#D4A373]">+100 幣</span></li>
+                                    </ul>
+                                </div>
+                                <div className="bg-white p-5 rounded-2xl border border-[#EAE2D5] flex items-center justify-center text-center italic font-bold text-[13px] text-[#967E6B] leading-snug shadow-sm">
+                                    「每一點能量累積，<br/>都讓未來的你更有底氣。」
+                                </div>
+                                <div className="bg-[#967E6B]/5 p-5 rounded-2xl border border-[#967E6B]/10 relative overflow-hidden group">
+                                    <h4 className="text-xs font-black text-[#967E6B] mb-1.5">狀態說明</h4>
+                                    <p className="text-[10px] font-bold text-[#7C7267] leading-relaxed">
+                                        <span className="text-[#A69B8F]">灰(無)</span> → 
+                                        <span className="text-[#967E6B]"> 褐(完成)</span> → 
+                                        <span className="text-[#D4A373]"> 橘(附圖)</span><br/>
+                                        積分與獎金換算比為 10 : 1
+                                    </p>
+                                    <div className="absolute right-[-5%] bottom-[-10%] text-5xl font-black text-[#967E6B] opacity-5 italic">SC</div>
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        /* Leaderboard View */
+                        <div className="space-y-3 max-w-xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
+                            <div className="text-center py-4">
+                                <h2 className="text-xl font-black text-[#3D362F]">能量累積排行榜</h2>
+                                <p className="text-[9px] text-[#A69B8F] font-bold tracking-[0.2em] uppercase mt-0.5">Top Accumulators</p>
+                            </div>
+                            
+                            {rankingList.length === 0 ? (
+                                <div className="text-center py-20 text-[#CDC5BC] font-bold italic">尚無數據</div>
+                            ) : (
+                                rankingList.map((m, idx) => (
+                                    <div key={m.id} className="bg-white rounded-2xl p-4 shadow-sm border border-[#EAE2D5] flex items-center gap-4 group hover:border-[#D4A373] transition-all">
+                                        {/* Rank Number */}
+                                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-base font-black shrink-0 shadow-inner
+                                            ${idx === 0 ? 'bg-yellow-400 text-white' : idx === 1 ? 'bg-slate-300 text-white' : idx === 2 ? 'bg-[#D4A373] text-white' : 'bg-[#F8F7F4] text-[#A69B8F]'}`}>
+                                            {idx + 1}
+                                        </div>
+
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <h3 className="text-base font-black text-[#3D362F] truncate">{m.name}</h3>
+                                                {idx === 0 && (
+                                                    <span className="bg-[#FAF3E0] text-[#D4A373] text-[8px] px-1.5 py-0.5 rounded-md font-black border border-[#D4A373]/20 flex items-center gap-1">
+                                                        <Icon name="sparkles" size={8} /> 首席
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="bg-[#FAF9F6] px-2 py-1.5 rounded-lg border border-[#F1EFE9] text-[10px] font-medium text-[#7C7267] truncate italic">
+                                                「{m.goals?.[`w${selectedWeek}`] || "持之以恆，便是力量"}」
+                                            </div>
+                                        </div>
+
+                                        {/* Total Section */}
+                                        <div className="bg-[#967E6B] text-white w-24 h-20 rounded-xl flex flex-col items-center justify-center shadow-md shrink-0">
+                                            <span className="text-xl font-black leading-none">{m.grandTotal}</span>
+                                            <p className="text-[8px] font-black opacity-60 uppercase mt-1">Total Score</p>
+                                            <div className="mt-1.5 pt-1.5 border-t border-white/20 w-16 text-center">
+                                                <p className="text-[9px] font-black text-yellow-200">${(m.grandTotal / 10).toFixed(0)} <span className="text-[7px] opacity-70">購物金</span></p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    )}
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
+            );
+        }
 
-      <footer className="max-w-6xl mx-auto mt-12 mb-8 text-center">
-        <div className="h-[1px] bg-gradient-to-r from-transparent via-[#EAE2D5] to-transparent mb-6"></div>
-        <p className="text-[10px] font-black text-[#D1C9BE] uppercase tracking-[0.6em]">
-          Transforming daily habits into cosmic energy
-        </p>
-      </footer>
-    </div>
-  );
-}
-
-// 輔助圖示組件
-function Quote({ size, className }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M3 21c3 0 7-1 7-8V5c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v4c0 1.1.9 2 2 2h4c0 3.5-1 6.1-4.5 6.1" />
-      <path d="M15 21c3 0 7-1 7-8V5c0-1.1-.9-2-2-2h-4c-1.1 0-2 .9-2 2v4c0 1.1.9 2 2 2h4c0 3.5-1 6.1-4.5 6.1" />
-    </svg>
-  );
-}
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
