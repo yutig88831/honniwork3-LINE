@@ -1,425 +1,392 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>安心小宇宙 - 能量累積計畫</title>
-    <!-- React & Babel -->
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Firebase SDKs (Using compat version for easier Babel integration) -->
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
-        body { font-family: 'Noto Sans TC', sans-serif; -webkit-tap-highlight-color: transparent; background-color: #F5F2ED; }
-        .animate-in { animation: fadeIn 0.4s ease-out; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-        ::-webkit-scrollbar { width: 0px; background: transparent; }
+import React, { useState, useEffect, useMemo } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, doc, onSnapshot, updateDoc, addDoc, deleteDoc } from 'firebase/firestore';
+import { Trash2, Trophy, Target, LayoutGrid, Users, Settings2, Sparkles, Quote } from 'lucide-react';
+
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'cosmic-energy-final-v2';
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [members, setMembers] = useState([]);
+  const [selectedWeek, setSelectedWeek] = useState(1);
+  const [newMemberName, setNewMemberName] = useState('');
+  const [activeTab, setActiveTab] = useState('management'); // 'management' 或 'leaderboard'
+
+  // 初始化 Auth
+  useEffect(() => {
+    const initAuth = async () => {
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        await signInAnonymously(auth);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
+
+  // 監聽 Firestore
+  useEffect(() => {
+    if (!user) return;
+    const q = collection(db, 'artifacts', appId, 'public', 'data', 'members');
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setMembers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => console.error("Firestore Error:", err));
+    return () => unsubscribe();
+  }, [user]);
+
+  // 計算邏輯
+  const calculateStats = (member, week) => {
+    const weekKey = `w${week}`;
+    const days = member.weeks?.[weekKey] || Array(7).fill({ done: false, photo: false });
+    const doneCount = days.filter(d => d.done).length;
+    const photoCount = days.filter(d => d.photo).length;
+
+    let taskCoins = 0;
+    if (doneCount >= 7) taskCoins = 90;
+    else if (doneCount >= 5) taskCoins = 60;
+    else if (doneCount >= 3) taskCoins = 30;
+
+    if (photoCount >= 3) taskCoins += 50;
+    if (doneCount >= 7) taskCoins += 100;
+
+    const bonus = member.bonus?.[weekKey] || 0;
+    const other = member.other?.[weekKey] || 0;
+
+    return { taskCoins, total: taskCoins + bonus + other };
+  };
+
+  const getGrandStats = (member) => {
+    let totalScore = 0;
+    for (let w = 1; w <= 12; w++) {
+      totalScore += calculateStats(member, w).total;
+    }
+    return { totalScore };
+  };
+
+  const rankingList = useMemo(() => {
+    return [...members]
+      .map(m => ({ ...m, grandTotal: getGrandStats(m).totalScore }))
+      .sort((a, b) => b.grandTotal - a.grandTotal);
+  }, [members]);
+
+  // 操作
+  const handleAdd = async () => {
+    if (!newMemberName.trim()) return;
+    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'members'), {
+      name: newMemberName,
+      weeks: {}, bonus: {}, other: {}, goals: {},
+      createdAt: Date.now()
+    });
+    setNewMemberName('');
+  };
+
+  const handleDelete = async (id) => {
+    try {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'members', id));
+    } catch (err) {
+      console.error("Delete Error:", err);
+    }
+  };
+
+  const toggleDay = async (member, idx) => {
+    const weekKey = `w${selectedWeek}`;
+    const weeks = { ...member.weeks };
+    if (!weeks[weekKey]) weeks[weekKey] = Array(7).fill({ done: false, photo: false });
+    
+    const day = { ...weeks[weekKey][idx] };
+    if (!day.done) { day.done = true; day.photo = false; }
+    else if (day.done && !day.photo) { day.photo = true; }
+    else { day.done = false; day.photo = false; }
+    
+    weeks[weekKey][idx] = day;
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'members', member.id), { weeks });
+  };
+
+  const updateGoal = async (id, val) => {
+    const weekKey = `w${selectedWeek}`;
+    const member = members.find(m => m.id === id);
+    const goals = { ...member.goals, [weekKey]: val };
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'members', id), { goals });
+  };
+
+  const updateNumericField = async (id, field, val) => {
+    const weekKey = `w${selectedWeek}`;
+    const member = members.find(m => m.id === id);
+    const data = { ...member[field], [weekKey]: parseInt(val) || 0 };
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'members', id), { [field]: data });
+  };
+
+  return (
+    <div className="h-screen bg-[#F7F6F3] text-[#5C5246] p-4 flex flex-col gap-4 overflow-hidden font-sans">
+      
+      {/* 頂部導覽列 */}
+      <div className="flex justify-between items-center bg-white px-6 py-3 rounded-3xl shadow-sm border border-[#EAE2D5]">
+        <div className="flex items-center gap-6">
+          <h1 className="text-xl font-black text-[#3D362F]">安心小宇宙 <span className="text-[#967E6B] font-light mx-1">|</span> <span className="text-base font-medium">Core Portal</span></h1>
+          
+          <nav className="flex bg-[#F8F6F2] p-1 rounded-2xl border border-[#EAE2D5]">
+            <button 
+              onClick={() => setActiveTab('management')}
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-xl text-xs font-black transition-all ${activeTab === 'management' ? 'bg-[#967E6B] text-white shadow-md' : 'text-[#A69B8F] hover:text-[#967E6B]'}`}
+            >
+              <LayoutGrid size={14} /> 管理矩陣
+            </button>
+            <button 
+              onClick={() => setActiveTab('leaderboard')}
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-xl text-xs font-black transition-all ${activeTab === 'leaderboard' ? 'bg-[#3D362F] text-white shadow-md' : 'text-[#A69B8F] hover:text-[#3D362F]'}`}
+            >
+              <Trophy size={14} /> 榮譽排行
+            </button>
+          </nav>
+        </div>
         
-        .reward-nowrap-container {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            white-space: nowrap;
-            overflow: hidden;
-            width: 100%;
-        }
-        .reward-title-group {
-            display: flex;
-            align-items: center;
-            flex-shrink: 0;
-            margin-right: 4px;
-        }
-        .reward-badge-group {
-            display: flex;
-            align-items: center;
-            flex-shrink: 1;
-            font-size: 11px;
-            letter-spacing: -0.05em;
-        }
-        @media (max-width: 375px) {
-            .reward-badge-group { font-size: 10px; }
-            .reward-title-group h2 { font-size: 14px; }
-        }
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 bg-[#F8F6F2] p-1 rounded-xl border border-[#EAE2D5]">
+            <span className="text-[10px] font-black text-[#A69B8F] pl-2 uppercase">Week View</span>
+            <select 
+              value={selectedWeek} 
+              onChange={(e) => setSelectedWeek(Number(e.target.value))}
+              className="bg-white px-3 py-1 rounded-lg font-bold text-[#967E6B] outline-none shadow-sm text-sm border border-[#EAE2D5]"
+            >
+              {[...Array(12)].map((_, i) => <option key={i+1} value={i+1}>WEEK {i+1}</option>)}
+            </select>
+          </div>
+          {activeTab === 'management' && (
+            <div className="flex gap-2 bg-white p-1 rounded-xl border border-[#EAE2D5] shadow-inner">
+              <input 
+                value={newMemberName}
+                onChange={(e) => setNewMemberName(e.target.value)}
+                placeholder="新增成員..."
+                className="bg-transparent px-3 py-1 text-xs font-bold outline-none w-32"
+              />
+              <button onClick={handleAdd} className="bg-[#967E6B] text-white px-4 py-1 rounded-lg font-black text-xs hover:bg-[#826d5c]">
+                ADD
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
 
-        select {
-            appearance: none;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23ffffff'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='3' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
-            background-repeat: no-repeat;
-            background-position: right 0.6rem center;
-            background-size: 0.8rem;
-            padding-right: 2rem;
-        }
-    </style>
-</head>
-<body>
-    <div id="root"></div>
+      {/* 內容分頁控制 */}
+      <div className="flex-1 overflow-hidden relative">
+        
+        {/* 管理分頁 */}
+        {activeTab === 'management' && (
+          <div className="h-full bg-white rounded-3xl border border-[#EAE2D5] shadow-sm flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-300">
+            <div className="px-6 py-3 border-b border-[#F1EFE9] flex justify-between items-center bg-[#FAF9F6]">
+              <h2 className="text-[10px] font-black text-[#A69B8F] uppercase tracking-widest flex items-center gap-2">
+                <Settings2 size={14} className="text-[#967E6B]" /> Member Activity Matrix
+              </h2>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto px-4 py-2">
+              <table className="w-full border-separate border-spacing-y-2">
+                <thead className="sticky top-0 bg-white z-10">
+                  <tr className="text-[10px] font-black text-[#A69B8F] uppercase">
+                    <th className="pb-3 text-left pl-2">成員資訊 / 本週目標</th>
+                    <th className="pb-3 text-center">W{selectedWeek} 任務回報</th>
+                    <th className="pb-3 text-center w-16">加碼</th>
+                    <th className="pb-3 text-center w-16">其他</th>
+                    <th className="pb-3 text-center w-24 text-[#967E6B]">總積分 / 購物金</th>
+                    <th className="pb-3 w-10"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-transparent">
+                  {members.map(m => {
+                    const weekKey = `w${selectedWeek}`;
+                    const stats = calculateStats(m, selectedWeek);
+                    const days = m.weeks?.[weekKey] || Array(7).fill({ done: false, photo: false });
+                    return (
+                      <tr key={m.id} className="bg-[#FAF9F6] group hover:bg-[#F3F1ED] transition-all">
+                        <td className="py-4 px-4 rounded-l-2xl">
+                          <div className="font-black text-base text-[#3D362F]">{m.name}</div>
+                          <input 
+                            key={`input-${m.id}-w${selectedWeek}`}
+                            defaultValue={m.goals?.[weekKey] || ""}
+                            onBlur={(e) => updateGoal(m.id, e.target.value)}
+                            placeholder="點擊設定目標..."
+                            className="text-[11px] font-bold text-[#967E6B] bg-white/50 px-2 py-1 rounded-lg outline-none w-full mt-2 border border-[#EAE2D5]/50 focus:border-[#D4A373] focus:bg-white"
+                          />
+                        </td>
+                        <td className="py-4 px-4">
+                          <div className="flex justify-center gap-1.5">
+                            {days.map((d, i) => (
+                              <button 
+                                key={i}
+                                onClick={() => toggleDay(m, i)}
+                                className={`w-8 h-8 rounded-xl font-black text-[11px] transition-all flex items-center justify-center shadow-sm
+                                  ${d.photo ? 'bg-[#D4A373] text-white scale-105 ring-2 ring-[#D4A373]/20' : d.done ? 'bg-[#967E6B] text-white' : 'bg-white text-[#A69B8F] border border-[#EAE2D5]'}`}
+                              >
+                                {i + 1}
+                              </button>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="py-4 px-4 text-center">
+                          <input 
+                            type="number"
+                            value={m.bonus?.[weekKey] || 0}
+                            onChange={(e) => updateNumericField(m.id, 'bonus', e.target.value)}
+                            className="w-12 bg-white rounded-xl py-1.5 text-center font-black text-[#967E6B] text-xs outline-none border border-[#EAE2D5]"
+                          />
+                        </td>
+                        <td className="py-4 px-4 text-center">
+                          <input 
+                            type="number"
+                            value={m.other?.[weekKey] || 0}
+                            onChange={(e) => updateNumericField(m.id, 'other', e.target.value)}
+                            className="w-12 bg-white rounded-xl py-1.5 text-center font-black text-[#D4A373] text-xs outline-none border border-[#EAE2D5]"
+                          />
+                        </td>
+                        <td className="py-4 px-4 text-center">
+                          <div className="font-black text-lg text-[#3D362F] leading-none">{stats.total}</div>
+                          <div className="text-[10px] font-black text-[#D4A373] mt-1.5">${(stats.total/10).toFixed(1)}</div>
+                        </td>
+                        <td className="py-4 px-4 text-center rounded-r-2xl">
+                          <button 
+                            onClick={() => { if(window.confirm('確定要永久刪除此成員及其所有記錄嗎？')) handleDelete(m.id) }}
+                            className="p-2 text-[#EAE2D5] hover:text-red-400 transition-all opacity-0 group-hover:opacity-100"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
 
-    <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
-
-        // Firebase Initialization
-        const firebaseConfig = JSON.parse(__firebase_config);
-        if (!firebase.apps.length) {
-            firebase.initializeApp(firebaseConfig);
-        }
-        const auth = firebase.auth();
-        const db = firebase.firestore();
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'habit-tracker-app';
-
-        const App = () => {
-            const [user, setUser] = useState(null);
-            const [view, setView] = useState('tracker'); 
-            const [selectedWeek, setSelectedWeek] = useState(1); 
-            const [nickname, setNickname] = useState('');
-            const [isNicknameLocked, setIsNicknameLocked] = useState(false);
-            const [allUsersData, setAllUsersData] = useState([]);
-            const [weeksData, setWeeksData] = useState(() => {
-                const initialStore = {};
-                for (let i = 1; i <= 12; i++) {
-                    initialStore[i] = {
-                        goal: '',
-                        days: Array.from({ length: 7 }, (_, idx) => ({
-                            dayId: idx + 1,
-                            declared: false,
-                            completed: false,
-                            photo: false
-                        }))
-                    };
-                }
-                return initialStore;
-            });
-
-            const [isEditingGoal, setIsEditingGoal] = useState(false);
-
-            // Auth Login (RULE 3)
-            useEffect(() => {
-                const initAuth = async () => {
-                    try {
-                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                            await auth.signInWithCustomToken(__initial_auth_token);
-                        } else {
-                            await auth.signInAnonymously();
-                        }
-                    } catch (err) {
-                        console.error("Auth error", err);
-                    }
-                };
-                initAuth();
-                const unsubscribe = auth.onAuthStateChanged((u) => {
-                    if (u) setUser(u);
-                });
-                return () => unsubscribe();
-            }, []);
-
-            // User Data Fetching (RULE 1)
-            useEffect(() => {
-                if (!user) return;
-                
-                const userDocRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('profile').doc('data');
-                const weeksDocRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('progress').doc('allWeeks');
-
-                const unsubProfile = userDocRef.onSnapshot((snap) => {
-                    if (snap.exists) {
-                        setNickname(snap.data().nickname || '');
-                        setIsNicknameLocked(!!snap.data().nickname);
-                    }
-                });
-
-                const unsubWeeks = weeksDocRef.onSnapshot((snap) => {
-                    if (snap.exists) {
-                        setWeeksData(snap.data().weeks);
-                    }
-                });
-
-                return () => { unsubProfile(); unsubWeeks(); };
-            }, [user]);
-
-            // Global Leaderboard Fetching
-            useEffect(() => {
-                if (!user) return;
-                const publicCol = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('leaderboard');
-                
-                const unsubPublic = publicCol.onSnapshot((snap) => {
-                    const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setAllUsersData(data);
-                }, (err) => console.error(err));
-
-                return () => unsubPublic();
-            }, [user]);
-
-            const currentWeek = useMemo(() => weeksData[selectedWeek], [weeksData, selectedWeek]);
-
-            const stats = useMemo(() => {
-                const compCount = currentWeek.days.filter(d => d.completed).length;
-                const photoCount = currentWeek.days.filter(d => d.photo).length;
-                let tickets = 0;
-                if (compCount >= 7) tickets = 6;
-                else if (compCount >= 5) tickets = 4;
-                else if (compCount >= 3) tickets = 2;
-                if (photoCount >= 3) tickets += 2;
-                return { compCount, photoCount, tickets };
-            }, [currentWeek]);
-
-            const syncData = async (newWeeksData, newNickname = nickname) => {
-                if (!user) return;
-                
-                await db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('progress').doc('allWeeks').set({
-                    weeks: newWeeksData
-                });
-
-                if (newNickname) {
-                    await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('leaderboard').doc(user.uid).set({
-                        nickname: newNickname,
-                        totalTickets: Object.values(newWeeksData).reduce((total, week) => {
-                            const c = week.days.filter(d => d.completed).length;
-                            const p = week.days.filter(d => d.photo).length;
-                            let t = 0;
-                            if (c >= 7) t = 6; else if (c >= 5) t = 4; else if (c >= 3) t = 2;
-                            if (p >= 3) t += 2;
-                            return total + t;
-                        }, 0),
-                        currentWeekGoal: newWeeksData[selectedWeek].goal,
-                        lastUpdated: Date.now()
-                    });
-                }
-            };
-
-            const updateGoal = (newGoal) => {
-                const nextData = { ...weeksData, [selectedWeek]: { ...weeksData[selectedWeek], goal: newGoal } };
-                setWeeksData(nextData);
-                syncData(nextData);
-            };
-
-            const toggleDayField = (dayId, field) => {
-                const newDays = currentWeek.days.map(d => 
-                    d.dayId === dayId ? { ...d, [field]: !d[field] } : d
-                );
-                const nextData = { ...weeksData, [selectedWeek]: { ...weeksData[selectedWeek], days: newDays } };
-                setWeeksData(nextData);
-                syncData(nextData);
-            };
-
-            const handleLockNickname = async () => {
-                if (nickname.trim() && user) {
-                    setIsNicknameLocked(true);
-                    await db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('profile').doc('data').set({
-                        nickname: nickname.trim()
-                    });
-                    syncData(weeksData, nickname.trim());
-                }
-            };
-
-            const sortedLeaderboard = useMemo(() => {
-                return [...allUsersData].sort((a, b) => b.totalTickets - a.totalTickets);
-            }, [allUsersData]);
-
-            if (!user) return <div className="min-h-screen flex items-center justify-center text-[#967E6B] font-bold">載入中小宇宙...</div>;
-
-            return (
-                <div className="min-h-screen flex justify-center p-4 text-[#5C544B] pb-24">
-                    <div className="max-w-md w-full space-y-5">
-                        <div className="text-center pt-2">
-                            <h1 className="text-xl font-black text-[#967E6B] tracking-[0.15em]">安心小宇宙｜能量累積計畫</h1>
-                        </div>
-
-                        <div className="flex items-center justify-between gap-3">
-                            <div className="flex-1 flex bg-white rounded-2xl p-1 shadow-sm border border-[#E8E2D9]">
-                                <button onClick={() => setView('tracker')} className={`flex-1 py-3 rounded-xl text-[13px] font-black transition-all ${view === 'tracker' ? 'bg-[#967E6B] text-white shadow-md' : 'text-[#B0A695]'}`}>個人打卡</button>
-                                <button onClick={() => setView('leaderboard')} className={`flex-1 py-3 rounded-xl text-[13px] font-black transition-all ${view === 'leaderboard' ? 'bg-[#967E6B] text-white shadow-md' : 'text-[#B0A695]'}`}>累積戰況</button>
-                            </div>
-                            
-                            <div className="relative shrink-0">
-                                <select 
-                                    value={selectedWeek}
-                                    onChange={(e) => setSelectedWeek(Number(e.target.value))}
-                                    className="bg-[#D9CFC1] text-white pl-3 pr-8 py-3 rounded-2xl font-black shadow-sm outline-none border-none text-[13px]"
-                                >
-                                    {[1,2,3,4,5,6,7,8,9,10,11,12].map(w => (
-                                        <option key={w} value={w} className="text-[#5C544B]">第 {w} 週</option>
-                                    ))}
-                                </select>
-                            </div>
-                        </div>
-
-                        {view === 'leaderboard' ? (
-                            <div className="space-y-4 animate-in">
-                                <div className="text-center pt-2">
-                                    <h2 className="text-2xl font-black text-[#5C544B] tracking-tight">累積戰況</h2>
-                                    <p className="text-[10px] font-bold text-[#967E6B] uppercase tracking-[0.2em] italic opacity-70 mt-1">Global Progress Tracking</p>
-                                </div>
-                                
-                                <div className="bg-white rounded-[3rem] p-6 shadow-sm border border-[#E8E2D9]">
-                                    <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2">
-                                        {sortedLeaderboard.length > 0 ? sortedLeaderboard.map((item, index) => (
-                                            <div key={item.id} className={`p-5 rounded-[2rem] border ${item.id === user.uid ? 'bg-[#FDF4EB] border-[#F1E4D8]' : 'bg-[#F9F7F4] border-transparent'}`}>
-                                                <div className="flex items-center justify-between mb-2">
-                                                    <div className="flex items-center gap-3">
-                                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-black text-xs ${index === 0 ? 'bg-yellow-500' : index === 1 ? 'bg-gray-400' : index === 2 ? 'bg-orange-400' : 'bg-[#D9CFC1]'}`}>{index + 1}</div>
-                                                        <span className="font-black text-lg text-[#5C544B]">{item.nickname}{item.id === user.uid && " (您)"}</span>
-                                                    </div>
-                                                    <div className="flex flex-col items-end">
-                                                        <span className="text-2xl font-black text-[#967E6B]">{item.totalTickets}</span>
-                                                        <span className="text-[9px] font-bold text-[#B0A695]">總計抽獎券</span>
-                                                    </div>
-                                                </div>
-                                                <div className="pt-2 border-t border-black/5">
-                                                    <p className="text-[10px] font-bold text-[#B0A695]">本週目標：<span className="text-[#967E6B]">{item.currentWeekGoal || "努力中"}</span></p>
-                                                </div>
-                                            </div>
-                                        )) : (
-                                            <p className="text-center py-10 text-[#D1C9BE] font-bold">尚無戰況數據...</p>
-                                        )}
-                                    </div>
-                                    
-                                    <div className="mt-8 p-6 bg-[#F9F7F4] rounded-[2rem] border border-dashed border-[#E8E2D9]">
-                                        <div className="text-center mb-4">
-                                            <p className="text-[10px] font-black text-[#967E6B] tracking-[0.2em] uppercase italic">積分與加碼規則</p>
-                                        </div>
-                                        <div className="space-y-3">
-                                            <div className="flex justify-between items-center bg-white/60 px-4 py-2 rounded-xl">
-                                                <span className="text-[11px] font-bold text-[#8C8479]">單週完成 3 / 5 / 7 天</span>
-                                                <span className="text-[11px] font-black text-[#967E6B]">獲 2 / 4 / 6 張券</span>
-                                            </div>
-                                            <div className="flex justify-between items-center bg-white/60 px-4 py-2 rounded-xl">
-                                                <span className="text-[11px] font-bold text-[#8C8479]">配戴照加碼 (單週 3 天)</span>
-                                                <span className="text-[11px] font-black text-[#E69354]">額外獲 2 張券</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="space-y-5 animate-in">
-                                <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-[#E8E2D9] flex items-center justify-between">
-                                    <div className="flex items-center gap-4 flex-1">
-                                        <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${isNicknameLocked ? 'bg-[#F5F2ED] text-[#D1C9BE]' : 'bg-[#FDF4EB] text-[#967E6B]'}`}>
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                                        </div>
-                                        <div className="overflow-hidden flex-1">
-                                            <p className="text-[10px] font-black text-[#B0A695] uppercase tracking-[0.1em] mb-0.5">Expedition Name</p>
-                                            <input 
-                                                type="text" 
-                                                value={nickname} 
-                                                readOnly={isNicknameLocked} 
-                                                onChange={(e) => setNickname(e.target.value)}
-                                                placeholder="請輸入社群暱稱，輸入後即無法更改" 
-                                                className={`w-full bg-transparent border-none p-0 focus:ring-0 text-[13px] font-black truncate ${isNicknameLocked ? 'text-[#B0A695]' : 'text-[#5C544B] placeholder:text-[#D1C9BE] placeholder:font-bold'}`} 
-                                            />
-                                        </div>
-                                    </div>
-                                    {!isNicknameLocked && nickname.trim().length > 0 && (
-                                        <button onClick={handleLockNickname} className="bg-[#967E6B] text-white text-[11px] px-4 py-2 rounded-xl font-black shadow-md transition-transform active:scale-95">確認鎖定</button>
-                                    )}
-                                </div>
-
-                                <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-[#E8E2D9]">
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-11 h-11 rounded-2xl bg-[#FFF9F2] text-[#E69354] flex items-center justify-center shrink-0">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
-                                        </div>
-                                        <div className="flex-1">
-                                            <p className="text-[10px] font-black text-[#B0A695] uppercase tracking-[0.1em] mb-0.5">本週目標設定</p>
-                                            {isEditingGoal ? (
-                                                <input 
-                                                    autoFocus
-                                                    type="text" 
-                                                    value={currentWeek.goal} 
-                                                    onChange={(e) => updateGoal(e.target.value)}
-                                                    onBlur={() => setIsEditingGoal(false)}
-                                                    onKeyDown={(e) => e.key === 'Enter' && setIsEditingGoal(false)}
-                                                    className="w-full bg-transparent border-none p-0 focus:ring-0 text-base font-black text-[#5C544B]"
-                                                />
-                                            ) : (
-                                                <p onClick={() => setIsEditingGoal(true)} className="text-base font-black text-[#5C544B] cursor-pointer">
-                                                    {currentWeek.goal || "點擊設定本週目標..."}
-                                                </p>
-                                            )}
-                                        </div>
-                                        <button onClick={() => setIsEditingGoal(!isEditingGoal)} className="text-[#D1C9BE]">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
-                                        </button>
-                                    </div>
-                                </div>
-
-                                <div className="bg-white rounded-[2.5rem] p-7 shadow-sm border border-[#E8E2D9] grid grid-cols-3 divide-x divide-[#F5F2ED]">
-                                    <div className="text-center">
-                                        <p className="text-2xl font-black mb-0.5 text-[#5C544B]">{currentWeek.days[0].completed ? 1 : 0}</p>
-                                        <p className="text-[10px] font-bold text-[#B0A695]">今日完成</p>
-                                    </div>
-                                    <div className="text-center">
-                                        <p className="text-2xl font-black mb-0.5 text-[#5C544B]">{stats.compCount}</p>
-                                        <p className="text-[10px] font-bold text-[#B0A695]">累計完成</p>
-                                    </div>
-                                    <div className="text-center px-1">
-                                        <p className="text-2xl font-black mb-0.5 text-[#5C544B]">{stats.compCount}</p>
-                                        <p className="text-[10px] font-bold text-[#B0A695] truncate">連續天數</p>
-                                    </div>
-                                </div>
-
-                                <div className="bg-[#FFF9F2] rounded-[2.5rem] p-6 border border-[#FBEAD9] shadow-sm">
-                                    <div className="reward-nowrap-container mb-5">
-                                        <div className="reward-title-group">
-                                            <span className="text-base mr-1.5">🏆</span>
-                                            <h2 className="text-base font-black text-[#855D3E]">當週獎勵預估</h2>
-                                        </div>
-                                        <div className="reward-badge-group bg-white px-3 py-1.5 rounded-full border border-[#FBEAD9] text-[#E69354] font-black shadow-sm">
-                                            預計獲得<span className="mx-0.5 underline underline-offset-2">{stats.tickets}</span>張抽獎券
-                                        </div>
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <div className="bg-white rounded-2xl p-4 shadow-sm border border-orange-50/50 text-center sm:text-left">
-                                            <p className="text-[#B0A695] text-[9px] font-black mb-1 uppercase tracking-wider">配戴加碼進度</p>
-                                            <p className="text-base font-black text-[#5C544B]">{stats.photoCount} / 3 天</p>
-                                        </div>
-                                        <div className="bg-white rounded-2xl p-4 shadow-sm border border-orange-50/50 text-center sm:text-left">
-                                            <p className="text-[#B0A695] text-[9px] font-black mb-1 uppercase tracking-wider">當前週次</p>
-                                            <p className="text-base font-black text-[#5C544B]">第 {selectedWeek} 週</p>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="space-y-4">
-                                    <div className="flex items-center gap-2 px-4">
-                                        <div className="h-[1px] flex-1 bg-[#E8E2D9]"></div>
-                                        <span className="text-[10px] font-black text-[#D1C9BE] uppercase tracking-[0.3em]">Week {selectedWeek} 打卡</span>
-                                        <div className="h-[1px] flex-1 bg-[#E8E2D9]"></div>
-                                    </div>
-                                    {currentWeek.days.map((day) => (
-                                        <div key={day.dayId} className="bg-white rounded-[2.5rem] p-7 shadow-sm border border-[#E8E2D9]">
-                                            <div className="flex justify-between items-center mb-5">
-                                                <span className="text-[11px] font-black text-[#B0A695] uppercase italic tracking-widest bg-[#F5F2ED] px-3 py-1 rounded-full">Day 0{day.dayId}</span>
-                                            </div>
-                                            <div className="grid grid-cols-2 gap-4">
-                                                <button onClick={() => toggleDayField(day.dayId, 'declared')} className={`py-4 rounded-2xl border-2 font-black text-sm transition-all active:scale-95 ${day.declared ? 'bg-[#967E6B] border-[#967E6B] text-white shadow-md' : 'bg-white border-[#F5F2ED] text-[#D1C9BE]'}`}>社群宣告</button>
-                                                <button onClick={() => toggleDayField(day.dayId, 'completed')} className={`py-4 rounded-2xl border-2 font-black text-sm transition-all active:scale-95 ${day.completed ? 'bg-[#967E6B] border-[#967E6B] text-white shadow-md' : 'bg-white border-[#F5F2ED] text-[#D1C9BE]'}`}>完成目標</button>
-                                            </div>
-                                            {day.completed && (
-                                                <button onClick={() => toggleDayField(day.dayId, 'photo')} className={`w-full mt-4 py-4 rounded-2xl border-2 flex items-center justify-center gap-2 text-[10px] font-black transition-all ${day.photo ? 'bg-[#FDF4EB] border-[#F1E4D8] text-[#967E6B]' : 'bg-[#F9F7F4] border-transparent text-[#D1C9BE]'}`}>
-                                                    {day.photo ? '✅ 已分享社群照' : '📸 分享社群照 (加碼抽獎券)'}
-                                                </button>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-                        
-                        <div className="pt-8 pb-10 text-center text-[#D1C9BE] text-[11px] font-black tracking-[0.4em] uppercase opacity-40">
-                            — STAY WARM & KEEP GOING —
-                        </div>
-                    </div>
+            {/* 管理分頁底部規則提示 */}
+            <div className="p-4 bg-[#FAF9F6] border-t border-[#F1EFE9] flex items-center justify-between">
+              <div className="flex gap-4">
+                <div className="bg-white px-4 py-2 rounded-2xl border border-[#EAE2D5] flex items-center gap-3">
+                  <span className="text-[9px] font-black text-[#A69B8F] uppercase tracking-widest border-r pr-3 border-[#F1EFE9]">Base Reward</span>
+                  <span className="text-[10px] font-bold text-[#5C5246]">3/5/7 天 → <span className="text-[#967E6B]">30/60/90 幣</span></span>
                 </div>
-            );
-        };
+                <div className="bg-white px-4 py-2 rounded-2xl border border-[#EAE2D5] flex items-center gap-3">
+                  <span className="text-[9px] font-black text-[#A69B8F] uppercase tracking-widest border-r pr-3 border-[#F1EFE9]">Extra Bonus</span>
+                  <span className="text-[10px] font-bold text-[#5C5246]">附圖滿 3 天 <span className="text-[#D4A373]">+50</span> | 全勤 <span className="text-yellow-600">+100</span></span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-[#A69B8F] text-[10px] font-bold italic">
+                <Sparkles size={12} /> Point conversion 10:1 to Shopping Credit
+              </div>
+            </div>
+          </div>
+        )}
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
-</body>
-</html>
+        {/* 排行榜分頁 */}
+        {activeTab === 'leaderboard' && (
+          <div className="h-full flex flex-col gap-4 animate-in fade-in slide-in-from-right-4 duration-500">
+            <div className="flex justify-between items-end px-2">
+              <div>
+                <h2 className="text-3xl font-black text-[#3D362F] tracking-tighter">累積榮譽排行榜</h2>
+                <p className="text-xs font-bold text-[#A69B8F] uppercase tracking-[0.3em]">Cumulative Cosmic Standings</p>
+              </div>
+              <div className="text-right">
+                <div className="bg-[#3D362F] text-white px-4 py-2 rounded-2xl inline-block shadow-lg">
+                  <div className="text-[10px] font-black opacity-60 uppercase">Active Season</div>
+                  <div className="text-lg font-black tracking-widest">W1 - W12</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-2 space-y-4 pb-8">
+              {rankingList.map((m, idx) => {
+                const weekKey = `w${selectedWeek}`;
+                const currentGoal = m.goals?.[weekKey];
+                const weekStats = calculateStats(m, selectedWeek);
+                
+                return (
+                  <div key={m.id} className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-[#EAE2D5] flex items-center gap-8 group hover:shadow-xl hover:border-[#D4A373] transition-all relative overflow-hidden">
+                    {/* 名次標誌 */}
+                    <div className="relative shrink-0">
+                      <div className={`w-16 h-16 rounded-[2rem] flex items-center justify-center text-2xl font-black shadow-inner
+                        ${idx === 0 ? 'bg-yellow-400 text-white ring-4 ring-yellow-100' : 
+                          idx === 1 ? 'bg-slate-300 text-white ring-4 ring-slate-100' : 
+                          idx === 2 ? 'bg-[#D4A373] text-white ring-4 ring-[#D4A373]/10' : 
+                          'bg-[#F7F6F3] text-[#A69B8F]'}`}>
+                        {idx + 1}
+                      </div>
+                      {idx < 3 && <Sparkles className="absolute -top-2 -right-2 text-yellow-500 animate-pulse" size={20} />}
+                    </div>
+
+                    {/* 成員主要資訊 */}
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-3">
+                        <h3 className="text-2xl font-black text-[#3D362F]">{m.name}</h3>
+                        {idx === 0 && <span className="bg-[#3D362F] text-white text-[10px] px-3 py-0.5 rounded-full font-bold uppercase tracking-widest">Season Leader</span>}
+                      </div>
+                      
+                      {/* 排行榜內的目標與狀態：窄窄的上下二行 */}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-[#FAF9F6] p-3 rounded-2xl border border-[#F1EFE9]">
+                           <div className="text-[9px] font-black text-[#A69B8F] uppercase mb-1 flex items-center gap-1">
+                             <Target size={10} className="text-[#D4A373]" /> Current Mission (W{selectedWeek})
+                           </div>
+                           <p className="text-xs font-bold text-[#5C5246] italic truncate">
+                             {currentGoal || "探索中，尚未設定目標"}
+                           </p>
+                        </div>
+                        <div className="bg-[#FAF9F6] p-3 rounded-2xl border border-[#F1EFE9]">
+                           <div className="text-[9px] font-black text-[#A69B8F] uppercase mb-1">
+                             Estimated Shopping Credit
+                           </div>
+                           <p className="text-sm font-black text-[#967E6B]">
+                             $ {(m.grandTotal / 10).toFixed(1)} <span className="text-[10px] font-medium text-[#A69B8F] ml-1">TWD</span>
+                           </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 本週數據概覽 */}
+                    <div className="w-40 border-l border-[#F1EFE9] pl-8 flex flex-col justify-center">
+                       <div className="text-[10px] font-black text-[#A69B8F] uppercase mb-2">Weekly Progress</div>
+                       <div className="flex gap-1.5 mb-2">
+                         {m.weeks?.[weekKey]?.map((d, i) => (
+                           <div key={i} className={`w-3 h-3 rounded-full ${d.done ? 'bg-[#967E6B]' : 'bg-[#EAE2D5]'}`} />
+                         )) || <div className="text-[10px] font-bold italic text-[#D1C9BE]">No records yet</div>}
+                       </div>
+                       <div className="text-[10px] font-bold text-[#967E6B]">
+                         本週已獲 +{weekStats.total} 能量
+                       </div>
+                    </div>
+
+                    {/* 總分大卡 */}
+                    <div className={`shrink-0 w-32 h-32 rounded-[2.5rem] flex flex-col items-center justify-center shadow-lg transition-transform group-hover:scale-105
+                      ${idx === 0 ? 'bg-yellow-400 text-white' : 'bg-[#FDFBF9] border-2 border-[#F1EFE9] text-[#3D362F]'}`}>
+                      <div className="text-3xl font-black leading-none">{m.grandTotal}</div>
+                      <div className="text-[10px] font-black uppercase mt-2 tracking-[0.2em] opacity-60">Points</div>
+                    </div>
+
+                    {/* 背景裝飾 */}
+                    <div className="absolute -right-4 -bottom-4 opacity-[0.03] rotate-12 pointer-events-none">
+                      <Trophy size={120} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 底部全域格言 */}
+      <div className="text-center py-1">
+        <p className="text-[10px] font-bold text-[#D1C9BE] uppercase tracking-[0.5em] flex items-center justify-center gap-3">
+          <span className="w-12 h-[1px] bg-[#EAE2D5]"></span>
+          Every choice matters in your own universe
+          <span className="w-12 h-[1px] bg-[#EAE2D5]"></span>
+        </p>
+      </div>
+    </div>
+  );
+}
