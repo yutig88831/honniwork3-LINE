@@ -8,93 +8,69 @@
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Noto Sans TC', sans-serif; background-color: #F8F7F4; color: #4A443F; font-size: 13px; }
-        .loading-overlay { background: rgba(248, 247, 244, 0.9); backdrop-filter: blur(8px); }
+        .loading-overlay { background: rgba(248, 247, 244, 1); position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; }
         input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-        .tab-btn { transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
-        .day-btn { transition: all 0.15s ease; }
+        .day-btn { transition: all 0.15s ease; cursor: pointer; }
+        input:focus { outline: 2px solid #967E6B; }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script type="text/babel" data-type="module">
-        import React, { useState, useEffect, useMemo, useRef } from "https://esm.sh/react@18";
-        import ReactDOM from "https://esm.sh/react-dom@18/client";
+    <script type="module">
+        import React, { useState, useEffect, useMemo, useRef } from 'https://esm.sh/react@18.2.0';
+        import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client';
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Firebase 配置讀取
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
+        // Firebase 初始化
+        let db, auth;
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'an-xin-cosmos-v1';
 
-        // --- 功能組件：中文友善輸入框 ---
-        const SmartInput = ({ value, onSave, placeholder, className }) => {
-            const [localValue, setLocalValue] = useState(value || '');
-            const isComposing = useRef(false); // 追蹤是否正在輸入法組字中
+        try {
+            const firebaseConfig = JSON.parse(__firebase_config);
+            const app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+        } catch (e) {
+            console.error("Firebase Init Failed", e);
+        }
+
+        const e = React.createElement;
+
+        // --- 中文輸入優化元件 ---
+        const GoalInput = ({ initialValue, onSave }) => {
+            const inputRef = useRef(null);
+            const isComposing = useRef(false);
 
             useEffect(() => {
-                if (!isComposing.current) {
-                    setLocalValue(value || '');
+                if (inputRef.current && !isComposing.current) {
+                    inputRef.current.value = initialValue || '';
                 }
-            }, [value]);
+            }, [initialValue]);
 
-            const handleCompositionStart = () => { isComposing.current = true; };
-            const handleCompositionEnd = (e) => {
-                isComposing.current = false;
-                setLocalValue(e.target.value);
-            };
-
-            const handleChange = (e) => {
-                setLocalValue(e.target.value);
-            };
-
-            const handleBlur = () => {
-                if (localValue !== value) {
-                    onSave(localValue);
+            return e('input', {
+                ref: inputRef,
+                type: 'text',
+                className: "text-[11px] font-medium text-[#967E6B] bg-[#FAF9F6] px-2 py-1 rounded-md outline-none w-full placeholder:text-[#CDC5BC] italic",
+                placeholder: "設定本週小目標...",
+                onCompositionStart: () => { isComposing.current = true; },
+                onCompositionEnd: (ev) => { 
+                    isComposing.current = false; 
+                },
+                onBlur: () => {
+                    if (!isComposing.current) onSave(inputRef.current.value);
+                },
+                onKeyDown: (ev) => {
+                    if (ev.key === 'Enter') inputRef.current.blur();
                 }
-            };
-
-            const handleKeyDown = (e) => {
-                if (e.key === 'Enter') {
-                    e.target.blur();
-                }
-            };
-
-            return (
-                <input
-                    type="text"
-                    className={className}
-                    placeholder={placeholder}
-                    value={localValue}
-                    onChange={handleChange}
-                    onCompositionStart={handleCompositionStart}
-                    onCompositionEnd={handleCompositionEnd}
-                    onBlur={handleBlur}
-                    onKeyDown={handleKeyDown}
-                />
-            );
+            });
         };
 
-        // --- SVG 圖示組件 ---
-        const Icon = ({ name, size = 12, className = "" }) => {
-            const icons = {
-                layout: <path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z" />,
-                trophy: <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 14.66V17c0 .55.47.98.97 1.21C11.47 18.44 12 19 12 19s.53-.56 1.03-.79c.5-.23.97-.66.97-1.21v-2.34c0-3.61-2-5.66-2-5.66s-2 2.05-2 5.66z" />,
-                plus: <path d="M12 5v14M5 12h14" />,
-                trash: <><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6"/></>,
-                user: <><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></>
-            };
-            return (
-                <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-                    {icons[name]}
-                </svg>
-            );
-        };
+        const IconTrash = () => e('svg', { width: "12", height: "12", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2.5", strokeLinecap: "round", strokeLinejoin: "round" },
+            e('path', { d: "M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6" })
+        );
 
         function App() {
             const [user, setUser] = useState(null);
@@ -105,287 +81,166 @@
             const [newName, setNewName] = useState('');
             const [deleteTarget, setDeleteTarget] = useState(null);
 
-            // (1) 身份驗證與初始化
             useEffect(() => {
-                const init = async () => {
+                const performAuth = async () => {
                     try {
                         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                             await signInWithCustomToken(auth, __initial_auth_token);
                         } else {
                             await signInAnonymously(auth);
                         }
-                    } catch (e) { console.error("Auth error", e); }
+                    } catch (err) { console.error("Auth Error", err); }
                 };
-                init();
-                const unsub = onAuthStateChanged(auth, setUser);
-                return () => unsub();
+                performAuth();
+                return onAuthStateChanged(auth, setUser);
             }, []);
 
-            // (2) 監聽資料
             useEffect(() => {
                 if (!user) return;
                 const q = collection(db, 'artifacts', appId, 'public', 'data', 'members');
-                const unsub = onSnapshot(q, (snapshot) => {
-                    const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-                    setMembers(list);
+                return onSnapshot(q, (snapshot) => {
+                    setMembers(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
                     setLoading(false);
                 }, (err) => {
-                    console.error("Firestore error", err);
+                    console.error("Firestore Error", err);
                     setLoading(false);
                 });
-                return () => unsub();
             }, [user]);
 
-            // --- 計算邏輯 ---
-            const calc = (m, week) => {
+            const calculateScore = (m, week) => {
                 const weekKey = `w${week}`;
                 const days = m.weeks?.[weekKey] || Array(7).fill({ done: false, photo: false });
                 const doneCount = days.filter(d => d.done).length;
                 const photoCount = days.filter(d => d.photo).length;
-
-                let coins = 0;
-                // 打卡階梯獎勵
-                if (doneCount >= 7) coins = 90;
-                else if (doneCount >= 5) coins = 60;
-                else if (doneCount >= 3) coins = 30;
-
-                // 附圖獎勵
+                let coins = doneCount >= 7 ? 90 : doneCount >= 5 ? 60 : doneCount >= 3 ? 30 : 0;
                 if (photoCount >= 3) coins += 50;
                 if (photoCount >= 7) coins += 100;
-
-                const bonus = Number(m.bonus?.[weekKey] || 0);
-                const total = coins + bonus;
-                return { coins: total, cash: Math.floor(total / 10) };
+                const total = coins + Number(m.bonus?.[weekKey] || 0);
+                return { total, cash: Math.floor(total / 10) };
             };
 
             const rankingData = useMemo(() => {
                 return members.map(m => {
-                    let total = 0;
-                    for(let i=1; i<=12; i++) total += calc(m, i).coins;
-                    return { ...m, grandTotal: total };
+                    let grandTotal = 0;
+                    for(let i=1; i<=12; i++) grandTotal += calculateScore(m, i).total;
+                    return { ...m, grandTotal };
                 }).sort((a, b) => b.grandTotal - a.grandTotal);
             }, [members]);
 
-            // --- 操作函式 ---
-            const save = async (data) => {
+            const updateMember = async (data) => {
                 if (!user) return;
                 await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'members', data.id), data);
             };
 
-            const addMember = async () => {
-                if (!newName.trim() || !user) return;
-                const id = Date.now().toString();
-                await save({ id, name: newName, weeks: {}, goals: {}, bonus: {} });
-                setNewName('');
-            };
-
             const toggleDay = async (mId, dayIdx) => {
                 const m = members.find(x => x.id === mId);
-                if (!m) return;
                 const weekKey = `w${selectedWeek}`;
                 const weeks = { ...m.weeks };
                 const days = [...(weeks[weekKey] || Array(7).fill({ done: false, photo: false }))];
-                
                 const curr = days[dayIdx];
                 if (!curr.done) days[dayIdx] = { done: true, photo: false };
-                else if (curr.done && !curr.photo) days[dayIdx] = { done: true, photo: true };
+                else if (!curr.photo) days[dayIdx] = { done: true, photo: true };
                 else days[dayIdx] = { done: false, photo: false };
-
                 weeks[weekKey] = days;
-                await save({ ...m, weeks });
+                await updateMember({ ...m, weeks });
             };
 
-            const updateField = async (mId, field, value) => {
-                const m = members.find(x => x.id === mId);
-                if (!m) return;
-                const weekKey = `w${selectedWeek}`;
-                const updated = { ...m, [field]: { ...(m[field] || {}), [weekKey]: value } };
-                await save(updated);
-            };
+            if (loading) return e('div', { className: 'loading-overlay' }, e('div', { className: 'w-8 h-8 border-4 border-[#967E6B] border-t-transparent rounded-full animate-spin' }));
 
-            const removeMember = async (id) => {
-                if (!user) return;
-                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'members', id));
-                setDeleteTarget(null);
-            };
-
-            return (
-                <div className="min-h-screen p-4 md:p-10 max-w-6xl mx-auto">
-                    {loading && (
-                        <div className="fixed inset-0 z-50 loading-overlay flex flex-col items-center justify-center">
-                            <div className="w-10 h-10 border-4 border-[#967E6B] border-t-transparent rounded-full animate-spin"></div>
-                            <p className="mt-4 text-[10px] font-black text-[#967E6B] tracking-[0.3em] uppercase">Initialising Universe</p>
-                        </div>
-                    )}
-
-                    {deleteTarget && (
-                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30 backdrop-blur-sm">
-                            <div className="bg-white rounded-3xl p-8 max-w-xs w-full shadow-2xl text-center border border-[#EAE2D5]">
-                                <div className="w-14 h-14 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                                    <Icon name="trash" size={24} />
-                                </div>
-                                <h3 className="text-sm font-black text-[#3D362F] mb-2">確定刪除成員？</h3>
-                                <p className="text-[11px] text-[#A69B8F] mb-8 leading-relaxed">此操作將永久刪除雲端紀錄。</p>
-                                <div className="flex gap-3">
-                                    <button onClick={() => setDeleteTarget(null)} className="flex-1 py-3 rounded-xl text-[11px] font-bold text-[#A69B8F] bg-[#FAF9F6]">取消</button>
-                                    <button onClick={() => removeMember(deleteTarget)} className="flex-1 py-3 rounded-xl text-[11px] font-bold text-white bg-red-500 shadow-lg shadow-red-200">刪除</button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Header */}
-                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10">
-                        <div className="flex items-center gap-4">
-                            <div className="bg-[#3D362F] p-3 rounded-2xl text-white shadow-xl shadow-stone-200">
-                                <Icon name="trophy" size={22} />
-                            </div>
-                            <div>
-                                <h1 className="text-xl font-black text-[#3D362F] tracking-tight">安心小宇宙</h1>
-                                <p className="text-[10px] font-bold text-[#A69B8F] tracking-[0.2em] uppercase mt-1">Energy Lab / v2.0</p>
-                            </div>
-                        </div>
-
-                        <div className="flex bg-white p-1 rounded-2xl shadow-sm border border-[#EAE2D5]">
-                            <button onClick={() => setActiveTab('management')} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-[11px] font-black tab-btn ${activeTab === 'management' ? 'bg-[#967E6B] text-white shadow-lg shadow-[#967E6B]/20' : 'text-[#A69B8F] hover:text-[#967E6B]'}`}>
-                                <Icon name="layout" size={13} /> 數據管理
-                            </button>
-                            <button onClick={() => setActiveTab('ranking')} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-[11px] font-black tab-btn ${activeTab === 'ranking' ? 'bg-[#3D362F] text-white shadow-lg shadow-black/20' : 'text-[#A69B8F] hover:text-[#3D362F]'}`}>
-                                <Icon name="trophy" size={13} /> 累積排行榜
-                            </button>
-                        </div>
-                    </div>
-
-                    {activeTab === 'management' ? (
-                        <div className="space-y-6 animate-in fade-in duration-500">
-                            {/* Toolbar */}
-                            <div className="flex flex-col md:flex-row gap-4">
-                                <div className="bg-white flex-1 flex rounded-2xl shadow-sm border border-[#EAE2D5] overflow-hidden focus-within:ring-4 ring-[#967E6B]/5 transition-all">
-                                    <div className="pl-5 flex items-center text-[#CDC5BC]"><Icon name="user" size={16} /></div>
-                                    <input 
-                                        value={newName} 
-                                        onChange={(e) => setNewName(e.target.value)} 
-                                        placeholder="輸入新成員姓名並按回車..." 
-                                        className="flex-1 px-4 py-4 outline-none font-bold text-xs text-[#3D362F]" 
-                                        onKeyPress={(e) => e.key === 'Enter' && addMember()} 
-                                    />
-                                    <button onClick={addMember} className="bg-[#967E6B] text-white px-8 text-[11px] font-black hover:bg-[#826d5c] transition-colors">
-                                        加入計畫
-                                    </button>
-                                </div>
-                                <div className="bg-white px-5 py-2 rounded-2xl shadow-sm border border-[#EAE2D5] flex items-center gap-4">
-                                    <span className="text-[10px] font-black text-[#A69B8F] uppercase tracking-widest shrink-0">目前週次</span>
-                                    <select value={selectedWeek} onChange={(e) => setSelectedWeek(Number(e.target.value))} className="font-black text-xs text-[#967E6B] outline-none bg-transparent cursor-pointer">
-                                        {[...Array(12)].map((_, i) => <option key={i+1} value={i+1}>WEEK {String(i+1).padStart(2, '0')}</option>)}
-                                    </select>
-                                </div>
-                            </div>
-
-                            {/* Table */}
-                            <div className="bg-white rounded-[2.5rem] shadow-sm border border-[#EAE2D5] overflow-hidden">
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-left">
-                                        <thead className="bg-[#FAF9F6] border-b border-[#EAE2D5]">
-                                            <tr className="text-[10px] font-black text-[#A69B8F] uppercase tracking-[0.15em]">
-                                                <th className="px-10 py-5">成員 / 本週目標</th>
-                                                <th className="px-4 py-5 text-center">任務報到 (單擊打卡 / 雙擊附圖)</th>
-                                                <th className="px-4 py-5 text-center w-24">加碼幣</th>
-                                                <th className="px-8 py-5 text-right w-40">本週積分 / 購物金</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-[#F1EFE9]">
-                                            {members.length === 0 ? (
-                                                <tr><td colSpan="4" className="py-24 text-center text-[#CDC5BC] font-medium italic text-xs">尚無成員紀錄，請先新增成員。</td></tr>
-                                            ) : (
-                                                members.map(m => {
-                                                    const stats = calc(m, selectedWeek);
-                                                    const weekKey = `w${selectedWeek}`;
-                                                    const days = m.weeks?.[weekKey] || Array(7).fill({ done: false, photo: false });
-                                                    return (
-                                                        <tr key={m.id} className="hover:bg-[#FAF9F6]/60 transition-colors group">
-                                                            <td className="px-10 py-6">
-                                                                <div className="flex items-center gap-3 mb-1.5">
-                                                                    <div className="font-black text-sm text-[#3D362F]">{m.name}</div>
-                                                                    <button onClick={() => setDeleteTarget(m.id)} className="opacity-0 group-hover:opacity-100 p-1.5 text-red-200 hover:text-red-500 transition-all rounded-lg">
-                                                                        <Icon name="trash" size={11} />
-                                                                    </button>
-                                                                </div>
-                                                                <SmartInput 
-                                                                    value={m.goals?.[weekKey] || ''} 
-                                                                    onSave={(val) => updateField(m.id, 'goals', val)}
-                                                                    placeholder="設定本週小目標..."
-                                                                    className="text-[11px] font-medium text-[#967E6B] bg-transparent outline-none w-full placeholder:text-[#CDC5BC] italic"
-                                                                />
-                                                            </td>
-                                                            <td className="px-4 py-6">
-                                                                <div className="flex justify-center gap-2">
-                                                                    {days.map((d, i) => (
-                                                                        <button 
-                                                                            key={i} 
-                                                                            onClick={() => toggleDay(m.id, i)} 
-                                                                            className={`w-9 h-9 rounded-xl font-black text-[11px] flex items-center justify-center border-2 day-btn shadow-sm ${d.photo ? 'bg-[#D4A373] text-white border-[#D4A373]' : d.done ? 'bg-[#967E6B] text-white border-[#967E6B]' : 'bg-white text-[#CDC5BC] border-[#F1EFE9] hover:border-[#EAE2D5]'}`}
-                                                                        >
-                                                                            {i + 1}
-                                                                        </button>
-                                                                    ))}
-                                                                </div>
-                                                            </td>
-                                                            <td className="px-4 py-6 text-center">
-                                                                <input 
-                                                                    type="number"
-                                                                    value={m.bonus?.[weekKey] || 0}
-                                                                    onChange={(e) => updateField(m.id, 'bonus', Number(e.target.value))}
-                                                                    className="w-14 h-9 bg-[#F8F7F4] rounded-xl text-center font-black text-[#5C8AE6] outline-none text-xs border border-transparent focus:border-[#5C8AE6]/20"
-                                                                />
-                                                            </td>
-                                                            <td className="px-8 py-6 text-right">
-                                                                <div className="font-black text-base text-[#3D362F] leading-tight">{stats.coins}</div>
-                                                                <div className="text-[10px] font-black text-[#D4A373] uppercase tracking-tighter mt-1">Cash $ {stats.cash}</div>
-                                                            </td>
-                                                        </tr>
-                                                    );
-                                                })
-                                            )}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </div>
-                    ) : (
-                        /* 排行榜 */
-                        <div className="max-w-2xl mx-auto space-y-5 animate-in slide-in-from-bottom-4 duration-500 pb-20">
-                            <div className="text-center py-6">
-                                <h2 className="text-lg font-black text-[#3D362F] tracking-tight">小宇宙能量榮譽榜</h2>
-                                <p className="text-[10px] font-bold text-[#A69B8F] uppercase tracking-[0.3em] mt-2">Global Ranking</p>
-                            </div>
-                            {rankingData.map((m, idx) => (
-                                <div key={m.id} className="bg-white rounded-[2rem] p-6 shadow-sm border border-[#EAE2D5] flex items-center gap-8 group hover:shadow-xl hover:-translate-y-1 transition-all">
-                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-xl font-black shrink-0 shadow-inner ${idx === 0 ? 'bg-yellow-400 text-white ring-4 ring-yellow-50' : idx === 1 ? 'bg-[#C0C0C0] text-white' : idx === 2 ? 'bg-[#CD7F32] text-white' : 'bg-[#F8F7F4] text-[#CDC5BC]'}`}>
-                                        {idx + 1}
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <h3 className="text-sm font-black text-[#3D362F] truncate">{m.name}</h3>
-                                        <div className="text-[11px] font-medium text-[#7C7267] truncate italic mt-1.5 opacity-70">
-                                            {m.goals?.[`w${selectedWeek}`] || "正在努力發光中..."}
-                                        </div>
-                                    </div>
-                                    <div className="bg-[#FAF9F6] px-8 py-4 rounded-3xl border border-[#F1EFE9] flex flex-col items-center justify-center shrink-0 min-w-[130px]">
-                                        <span className="text-xl font-black text-[#3D362F]">{m.grandTotal}</span>
-                                        <div className="w-10 h-0.5 bg-[#967E6B]/20 my-1.5"></div>
-                                        <p className="text-[10px] font-black text-[#D4A373] tracking-widest">
-                                            NT$ <span className="text-sm">{Math.floor(m.grandTotal / 10)}</span>
-                                        </p>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
+            return e('div', { className: "min-h-screen p-4 md:p-10 max-w-6xl mx-auto" },
+                deleteTarget && e('div', { className: "fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" },
+                    e('div', { className: "bg-white rounded-3xl p-6 max-w-xs w-full shadow-2xl" },
+                        e('h3', { className: "text-sm font-black mb-2" }, "刪除成員？"),
+                        e('p', { className: "text-[11px] text-gray-400 mb-6" }, "這將永久移除該位成員的雲端紀錄。"),
+                        e('div', { className: "flex gap-2" },
+                            e('button', { onClick: () => setDeleteTarget(null), className: "flex-1 py-2 bg-gray-100 rounded-xl font-bold text-[11px]" }, "取消"),
+                            e('button', { onClick: async () => { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'members', deleteTarget)); setDeleteTarget(null); }, className: "flex-1 py-2 bg-red-500 text-white rounded-xl font-bold text-[11px]" }, "確定刪除")
+                        )
+                    )
+                ),
+                e('div', { className: "flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10" },
+                    e('div', null,
+                        e('h1', { className: "text-xl font-black text-[#3D362F] tracking-tight" }, "安心小宇宙"),
+                        e('p', { className: "text-[10px] font-bold text-[#A69B8F] tracking-widest mt-1" }, "ENERGY PERSISTENCE PLAN")
+                    ),
+                    e('div', { className: "flex bg-white p-1 rounded-2xl border border-[#EAE2D5]" },
+                        e('button', { onClick: () => setActiveTab('management'), className: `px-5 py-2 rounded-xl text-[11px] font-black ${activeTab === 'management' ? 'bg-[#967E6B] text-white shadow-lg' : 'text-[#A69B8F]'}` }, "數據管理"),
+                        e('button', { onClick: () => setActiveTab('ranking'), className: `px-5 py-2 rounded-xl text-[11px] font-black ${activeTab === 'ranking' ? 'bg-[#3D362F] text-white shadow-lg' : 'text-[#A69B8F]'}` }, "累積排行榜")
+                    )
+                ),
+                activeTab === 'management' ? e('div', { className: "space-y-6" },
+                    e('div', { className: "flex flex-col md:flex-row gap-4" },
+                        e('div', { className: "bg-white flex-1 flex rounded-2xl shadow-sm border border-[#EAE2D5] overflow-hidden" },
+                            e('input', { value: newName, onChange: (ev) => setNewName(ev.target.value), placeholder: "輸入新成員姓名...", className: "flex-1 px-4 py-4 outline-none font-bold text-xs", onKeyPress: (ev) => ev.key === 'Enter' && (async () => { if(!newName.trim()) return; await updateMember({ id: Date.now().toString(), name: newName, weeks: {}, goals: {}, bonus: {} }); setNewName(''); })() }),
+                            e('button', { onClick: async () => { if(!newName.trim()) return; await updateMember({ id: Date.now().toString(), name: newName, weeks: {}, goals: {}, bonus: {} }); setNewName(''); }, className: "bg-[#967E6B] text-white px-6 text-[11px] font-black" }, "加入")
+                        ),
+                        e('div', { className: "bg-white px-4 py-2 rounded-2xl shadow-sm border border-[#EAE2D5] flex items-center gap-3" },
+                            e('span', { className: "text-[10px] font-black text-gray-400" }, "WEEK"),
+                            e('select', { value: selectedWeek, onChange: (ev) => setSelectedWeek(Number(ev.target.value)), className: "font-black text-xs text-[#967E6B] outline-none bg-transparent" },
+                                [...Array(12)].map((_, i) => e('option', { key: i+1, value: i+1 }, i+1))
+                            )
+                        )
+                    ),
+                    e('div', { className: "bg-white rounded-[2rem] shadow-sm border border-[#EAE2D5] overflow-hidden" },
+                        e('div', { className: "overflow-x-auto" },
+                            e('table', { className: "w-full text-left text-[13px]" },
+                                e('thead', { className: "bg-[#FAF9F6] border-b border-[#EAE2D5]" },
+                                    e('tr', { className: "text-[10px] font-black text-[#A69B8F] uppercase tracking-wider" },
+                                        e('th', { className: "px-8 py-4" }, "成員與目標"),
+                                        e('th', { className: "px-4 py-4 text-center" }, "每日打卡"),
+                                        e('th', { className: "px-4 py-4 text-center w-20" }, "加碼"),
+                                        e('th', { className: "px-8 py-4 text-right" }, "本週/購物金")
+                                    )
+                                ),
+                                e('tbody', { className: "divide-y divide-[#F1EFE9]" },
+                                    members.map(m => {
+                                        const stats = calculateScore(m, selectedWeek);
+                                        const weekKey = `w${selectedWeek}`;
+                                        const days = m.weeks?.[weekKey] || Array(7).fill({ done: false, photo: false });
+                                        return e('tr', { key: m.id, className: "hover:bg-[#FAF9F6]/50 transition-colors" },
+                                            e('td', { className: "px-8 py-5" },
+                                                e('div', { className: "flex items-center gap-2 mb-2" },
+                                                    e('span', { className: "font-black text-[#3D362F]" }, m.name),
+                                                    e('button', { onClick: () => setDeleteTarget(m.id), className: "text-gray-300 hover:text-red-400 p-1" }, e(IconTrash))
+                                                ),
+                                                e(GoalInput, { initialValue: m.goals?.[weekKey] || '', onSave: (val) => updateMember({ ...m, goals: { ...(m.goals || {}), [weekKey]: val } }) })
+                                            ),
+                                            e('td', { className: "px-4 py-5" },
+                                                e('div', { className: "flex justify-center gap-1.5" },
+                                                    days.map((d, i) => e('button', { key: i, onClick: () => toggleDay(m.id, i), className: `w-8 h-8 rounded-lg font-black text-[10px] day-btn border-2 ${d.photo ? 'bg-[#D4A373] text-white border-[#D4A373]' : d.done ? 'bg-[#967E6B] text-white border-[#967E6B]' : 'bg-white text-gray-200 border-gray-50'}` }, i + 1))
+                                                )
+                                            ),
+                                            e('td', { className: "px-4 py-5 text-center" },
+                                                e('input', { type: 'number', value: m.bonus?.[weekKey] || 0, onChange: (ev) => updateMember({ ...m, bonus: { ...(m.bonus || {}), [weekKey]: Number(ev.target.value) } }), className: "w-12 h-8 bg-gray-50 rounded-lg text-center font-black text-blue-500 outline-none text-[11px]" })
+                                            ),
+                                            e('td', { className: "px-8 py-5 text-right" },
+                                                e('div', { className: "font-black text-[#3D362F]" }, `${stats.total} 幣`),
+                                                e('div', { className: "text-[10px] font-black text-[#D4A373]" }, `NT$ ${stats.cash}`)
+                                            )
+                                        );
+                                    })
+                                )
+                            )
+                        )
+                    )
+                ) : e('div', { className: "max-w-xl mx-auto space-y-4" },
+                    rankingData.map((m, idx) => e('div', { key: m.id, className: "bg-white rounded-3xl p-5 shadow-sm border border-[#EAE2D5] flex items-center gap-6" },
+                        e('div', { className: `w-12 h-12 rounded-xl flex items-center justify-center text-lg font-black ${idx === 0 ? 'bg-yellow-400 text-white' : 'bg-gray-100 text-gray-400'}` }, idx + 1),
+                        e('div', { className: "flex-1" },
+                            e('h3', { className: "font-black text-[#3D362F]" }, m.name),
+                            e('p', { className: "text-[10px] text-gray-400 mt-1 italic" }, `「${m.goals?.[`w${selectedWeek}`] || "深空探索中"}」`)
+                        ),
+                        e('div', { className: "text-right" },
+                            e('div', { className: "text-lg font-black text-[#3D362F]" }, m.grandTotal),
+                            e('div', { className: "text-[10px] font-black text-[#D4A373]" }, `NT$ ${Math.floor(m.grandTotal / 10)}`)
+                        )
+                    ))
+                )
             );
         }
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        root.render(e(App));
     </script>
 </body>
 </html>
