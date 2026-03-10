@@ -1,15 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Sparkles, Trophy, RefreshCw, AlertCircle, Calendar, CheckCircle2, Star, Zap, Target, Flame } from 'lucide-react';
+import { Sparkles, Trophy, RefreshCw, AlertCircle, Calendar, Database, Target } from 'lucide-react';
 
 /**
- * 💡 部署說明：
- * 請確保您的 Google Apps Script 已將 Excel 的 B-O 欄完整回傳。
+ * 🚀 網址設定：請替換為您「重新部署」後的 GAS 網址
  */
-const SHEET_API_URL = "https://script.google.com/macros/s/AKfycbxU_uYemVqV2qmzU3PhGUIOFkhWNW9T7sQnHAAIdOUUg2g5r0PgWH9PP9fzUzvNX7MS5Q/exec"; 
+const SHEET_API_URL = "https://script.google.com/macros/s/AKfycbw76VSNiiWXh2Gv-aCCaj3jG9xcvFKU0VPeDVvsE192Sbrx1Uzov2JdJuGszHgrfQZsaQ/exec"; 
 
 const App = () => {
-  const [weekData, setWeekData] = useState([]);
-  const [rankData, setRankData] = useState([]);
+  const [data, setData] = useState([]);
   const [activeTab, setActiveTab] = useState('week'); 
   const [loading, setLoading] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
@@ -17,22 +15,18 @@ const App = () => {
   const timeoutRef = useRef(null);
 
   const fetchData = useCallback(async (isAuto = false) => {
-    if (!SHEET_API_URL || SHEET_API_URL.includes("XXXXX")) return;
     if (!isAuto) setLoading(true);
     setError(null);
     
     try {
       const callbackName = 'jsonp_cb_' + Math.round(100000 * Math.random());
       const script = document.createElement('script');
-      script.src = `${SHEET_API_URL}?callback=${callbackName}&t=${Date.now()}`;
+      const separator = SHEET_API_URL.includes('?') ? '&' : '?';
+      script.src = `${SHEET_API_URL}${separator}callback=${callbackName}&t=${Date.now()}`;
       
       const responsePromise = new Promise((resolve, reject) => {
         window[callbackName] = (res) => { resolve(res); cleanup(); };
-        timeoutRef.current = setTimeout(() => { 
-          reject(new Error("連線逾時，請檢查 Google 腳本是否部署正確並設為「所有人」")); 
-          cleanup(); 
-        }, 20000);
-        
+        timeoutRef.current = setTimeout(() => { reject(new Error("連線逾時")); cleanup(); }, 15000);
         const cleanup = () => {
           if (script.parentNode) script.parentNode.removeChild(script);
           delete window[callbackName];
@@ -44,21 +38,11 @@ const App = () => {
       const res = await responsePromise;
 
       if (res && Array.isArray(res)) {
-        // 修正資料映射邏輯，確保與 Excel 欄位對齊
-        const formattedData = res.map(item => ({
-          name: item.name,
-          goal: item.goal || "能量生活計畫", // 讀取 Excel B 欄
-          checkInDays: Array.isArray(item.checkInDays) ? item.checkInDays : [0,0,0,0,0,0,0], // 讀取 C-I 欄
-          extraTask: item.extraTask, // 讀取 J/K 欄
-          shoppingGold: item.shoppingGold || 0, // 讀取 N/O 欄
-          totalTickets: item.totalTickets || 0, // 讀取 M 欄
-          extraCount: item.extraCount || 0
-        }));
-
-        setWeekData(formattedData);
-        const sortedRank = [...formattedData].sort((a, b) => (Number(b.totalTickets) || 0) - (Number(a.totalTickets) || 0));
-        setRankData(sortedRank);
+        const sortedData = res.sort((a, b) => b.totalTickets - a.totalTickets);
+        setData(sortedData);
         setLastUpdate(new Date().toLocaleTimeString());
+      } else {
+        setError("資料讀取失敗，請確認 GAS 部署。");
       }
     } catch (err) {
       setError(err.message);
@@ -69,193 +53,125 @@ const App = () => {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(() => fetchData(true), 60000); 
+    const interval = setInterval(() => fetchData(true), 300000);
     return () => clearInterval(interval);
   }, [fetchData]);
-
-  // 計算已打卡天數 (1 或 2 皆算)
-  const getCheckInCount = (days) => {
-    if (!Array.isArray(days)) return 0;
-    return days.filter(d => d > 0).length;
-  };
-
-  const renderCheckInCircles = (days) => {
-    const dayLabels = [1, 2, 3, 4, 5, 6, 7];
-    const data = Array.isArray(days) ? days : [0, 0, 0, 0, 0, 0, 0]; 
-
-    return (
-      <div className="flex gap-1.5 mt-2">
-        {dayLabels.map((label, idx) => {
-          const status = data[idx];
-          return (
-            <div 
-              key={idx}
-              className={`w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-black transition-all border
-                ${status === 2 ? 'bg-[#D4A373] text-white border-[#D4A373] shadow-sm' : 
-                  status === 1 ? 'bg-[#EAE2D5] text-[#967E6B] border-[#D4A373]/20' : 
-                  'bg-white text-[#CDC5BC] border-stone-100'}`}
-            >
-              {label}
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
 
   return (
     <div className="min-h-screen bg-[#FDFCFB] text-[#4A443F] pb-24 font-sans tracking-tight">
       {/* Header */}
-      <div className="bg-[#967E6B] text-white pt-10 pb-12 px-6 shadow-lg relative">
-        <div className="max-w-4xl mx-auto flex justify-between items-center relative z-10">
+      <div className="bg-[#967E6B] text-white pt-10 pb-16 px-6 shadow-lg">
+        <div className="max-w-5xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-4">
             <div className="bg-white/10 p-3 rounded-2xl border border-white/20">
               <Trophy className="w-8 h-8 text-amber-200" />
             </div>
             <div>
-              <h1 className="text-2xl sm:text-3xl font-black tracking-tight">安心小宇宙</h1>
-              <p className="text-white/60 text-[10px] font-bold uppercase tracking-[0.2em]">Energy Program</p>
+              <h1 className="text-2xl font-black text-white">安心小宇宙</h1>
+              <p className="text-white/60 text-[10px] font-bold tracking-[0.2em] mt-1 uppercase">Visual Energy Tracker</p>
             </div>
           </div>
-          
-          <button 
-            onClick={() => fetchData()}
-            disabled={loading}
-            className="flex items-center gap-2 bg-white text-[#967E6B] px-5 py-2.5 rounded-xl font-black shadow-lg active:scale-95 transition-all"
-          >
+          <button onClick={() => fetchData()} disabled={loading} className="bg-white text-[#967E6B] px-5 py-2.5 rounded-xl font-black shadow-lg flex items-center gap-2 active:scale-95">
             <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
-            <span className="hidden sm:inline text-sm">更新數據</span>
+            <span className="text-sm">同步</span>
           </button>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="max-w-4xl mx-auto px-6 pt-8 relative z-20">
+      <div className="max-w-5xl mx-auto px-6 -mt-8">
         <div className="bg-white p-2 rounded-[2rem] shadow-xl flex gap-2 border border-[#EAE2D5]">
-          <button 
-            onClick={() => setActiveTab('rank')}
-            className={`flex-1 py-4 rounded-[1.5rem] font-black text-sm transition-all flex items-center justify-center gap-2 ${activeTab === 'rank' ? 'bg-[#967E6B] text-white shadow-lg' : 'text-[#BCAE9F] hover:bg-stone-50'}`}
-          >
+          <button onClick={() => setActiveTab('rank')} className={`flex-1 py-4 rounded-[1.5rem] font-black text-sm flex items-center justify-center gap-2 ${activeTab === 'rank' ? 'bg-[#967E6B] text-white' : 'text-[#BCAE9F]'}`}>
             <Trophy size={16} /> 排行榜
           </button>
-          <button 
-            onClick={() => setActiveTab('week')}
-            className={`flex-1 py-4 rounded-[1.5rem] font-black text-sm transition-all flex items-center justify-center gap-2 ${activeTab === 'week' ? 'bg-[#967E6B] text-white shadow-lg' : 'text-[#BCAE9F] hover:bg-stone-50'}`}
-          >
+          <button onClick={() => setActiveTab('week')} className={`flex-1 py-4 rounded-[1.5rem] font-black text-sm flex items-center justify-center gap-2 ${activeTab === 'week' ? 'bg-[#967E6B] text-white' : 'text-[#BCAE9F]'}`}>
             <Calendar size={16} /> 本週數據
           </button>
         </div>
       </div>
 
-      <main className="max-w-4xl mx-auto px-6 mt-12">
-        {error && (
-          <div className="mb-6 bg-red-50 border border-red-100 text-red-700 p-4 rounded-2xl flex items-center gap-3">
-            <AlertCircle size={20} className="shrink-0" />
-            <div className="text-xs font-bold">{error}</div>
-          </div>
-        )}
-
-        <div className="flex justify-between items-center mb-8 px-2">
-          <h2 className="text-xl font-black flex items-center gap-2.5 text-[#3D362F]">
+      <main className="max-w-5xl mx-auto px-6 mt-12">
+        <div className="flex justify-between items-center mb-6 px-2">
+          <h2 className="text-xl font-black flex items-center gap-2.5">
             <span className="w-1.5 h-6 bg-[#D4A373] rounded-full"></span>
-            {activeTab === 'rank' ? '能量累積排行榜' : '本週任務進度'}
+            {activeTab === 'rank' ? '累積總排行' : '本週任務進度'}
           </h2>
-          {lastUpdate && <span className="text-[10px] font-black text-[#BCAE9F] bg-white px-3 py-1.5 rounded-full border border-[#EAE2D5]">同步：{lastUpdate}</span>}
+          {lastUpdate && <span className="text-[10px] font-black text-[#BCAE9F]">最後同步: {lastUpdate}</span>}
         </div>
 
-        {activeTab === 'rank' ? (
-          /* 累積排行榜 */
+        {activeTab === 'week' ? (
+          <div className="bg-white rounded-[2.5rem] shadow-xl border border-[#EAE2D5] overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="bg-stone-50/50 border-b border-stone-100">
+                    <th className="px-8 py-6 text-[11px] font-black text-[#BCAE9F] uppercase tracking-widest">成員與目標</th>
+                    <th className="px-8 py-6 text-[11px] font-black text-[#BCAE9F] uppercase tracking-widest text-center">7日能量柱 (1:淺 2:深)</th>
+                    <th className="px-8 py-6 text-[11px] font-black text-[#BCAE9F] uppercase tracking-widest text-center">總積分</th>
+                    <th className="px-8 py-6 text-[11px] font-black text-[#BCAE9F] uppercase tracking-widest text-right">獎金</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-stone-50">
+                  {data.map((item, idx) => (
+                    <tr key={idx} className="hover:bg-stone-50/40 transition-colors group">
+                      <td className="px-8 py-6">
+                        <div className="font-black text-base text-[#3D362F]">{item.name}</div>
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-[#BCAE9F] mt-1">
+                          <Target size={10} className="text-[#D4A373]" />
+                          {item.goal}
+                        </div>
+                      </td>
+                      <td className="px-8 py-6">
+                        <div className="flex justify-center items-end gap-1.5 h-8">
+                          {item.dailyStatus && item.dailyStatus.map((val, i) => (
+                            <div 
+                              key={i} 
+                              className={`w-3 rounded-full transition-all duration-500
+                                ${val === 2 ? 'bg-[#D4A373] h-full shadow-sm' : 
+                                  val === 1 ? 'bg-[#EAE2D5] h-3/5' : 
+                                  'bg-stone-100 h-1.5'}`}
+                              title={val === 2 ? "附圖完成" : val === 1 ? "完成" : "未完成"}
+                            ></div>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-8 py-6 text-center">
+                        <span className="bg-[#FAF9F6] px-4 py-1.5 rounded-xl border border-stone-100 text-lg font-black text-[#967E6B]">
+                          {item.totalTickets}
+                        </span>
+                      </td>
+                      <td className="px-8 py-6 text-right font-black text-emerald-600 text-lg">
+                        ${item.shoppingGold}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          /* 排行榜 View 略，保持原樣 */
           <div className="space-y-4">
-            {rankData.length > 0 ? rankData.map((item, idx) => (
-              <div key={idx} className="bg-white rounded-[2rem] p-5 border border-[#EAE2D5] flex items-center gap-4 shadow-sm hover:translate-y-[-1px] transition-all">
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-base
-                  ${idx === 0 ? 'bg-amber-100 text-amber-600' : idx === 1 ? 'bg-slate-100 text-slate-500' : idx === 2 ? 'bg-orange-50 text-orange-700' : 'bg-stone-50 text-stone-300'}`}>
-                  {idx + 1}
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-black text-base text-[#3D362F]">{item.name}</h3>
-                    {idx === 0 && <Sparkles size={14} className="text-amber-500" />}
+            {data.map((item, idx) => (
+              <div key={idx} className="bg-white rounded-[2rem] p-6 border border-[#EAE2D5] flex items-center justify-between shadow-sm">
+                <div className="flex items-center gap-6">
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg ${idx === 0 ? 'bg-amber-100 text-amber-600' : 'bg-stone-50 text-stone-300'}`}>
+                    {idx + 1}
                   </div>
-                  <div className="flex items-center gap-4 mt-0.5">
-                    <p className="text-[10px] font-bold text-emerald-600">獎金: ${item.shoppingGold}</p>
-                    {item.extraTask && item.extraTask !== "無" && (
-                       <p className="text-[10px] font-bold text-[#BCAE9F]">
-                         加碼: <span className="text-[#967E6B]">{item.extraTask}</span>
-                       </p>
-                    )}
+                  <div>
+                    <h3 className="font-black text-lg text-[#3D362F]">{item.name}</h3>
+                    <p className="text-[10px] font-bold text-emerald-600 uppercase">累積獎金: ${item.shoppingGold}</p>
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-xl font-black text-[#967E6B] leading-none">{item.totalTickets}</div>
-                  <div className="text-[8px] font-bold text-[#BCAE9F] uppercase tracking-widest mt-1">Pts</div>
+                  <div className="text-2xl font-black text-[#967E6B]">{item.totalTickets}</div>
+                  <div className="text-[8px] font-black text-[#BCAE9F] uppercase tracking-widest mt-1">Total Energy</div>
                 </div>
               </div>
-            )) : !loading && <div className="text-center py-20 text-[#BCAE9F] font-bold italic">等待數據同步中...</div>}
-          </div>
-        ) : (
-          /* 本週數據卡片 */
-          <div className="space-y-6">
-            {weekData.length > 0 ? weekData.map((item, idx) => (
-              <div key={idx} className="bg-white rounded-[2.5rem] p-6 border border-[#EAE2D5] shadow-sm hover:shadow-md transition-all">
-                <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
-                  {/* 個人資訊 */}
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-2">
-                       <h3 className="font-black text-xl text-[#3D362F]">{item.name}</h3>
-                       <div className="bg-emerald-50 text-emerald-600 text-[10px] px-2 py-0.5 rounded-full font-bold border border-emerald-100">
-                         ACTIVE
-                       </div>
-                    </div>
-                    {/* 紅色框框需求：顯示本週目標與已完成打卡天數 */}
-                    <div className="flex flex-wrap items-center gap-4">
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-[#967E6B]">
-                        <Target size={14} className="text-[#D4A373]" />
-                        <span>目標：{item.goal}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-[#967E6B]">
-                        <Flame size={14} className="text-orange-500" />
-                        <span>已完成：{getCheckInCount(item.checkInDays)} 天</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 右側：購物金區塊 (橘色框框縮小貼合) */}
-                  <div className="bg-[#D4A373] px-3 py-2 rounded-2xl text-right shadow-lg shadow-[#D4A373]/20 inline-block">
-                    <div className="text-[8px] font-black text-white/70 mb-0.5 uppercase tracking-wider">本週購物金</div>
-                    <div className="text-lg font-black text-white leading-none">${item.shoppingGold}</div>
-                    <div className="text-[8px] font-bold text-white/50 mt-1">{item.totalTickets} Pts</div>
-                  </div>
-                </div>
-
-                {/* 下方：打卡進度 */}
-                <div className="mt-6 pt-5 border-t border-stone-50 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-                   <div className="flex-1">
-                     <span className="text-[10px] font-black text-[#BCAE9F] uppercase tracking-[0.15em] mb-3 block">一週打卡進度紀錄 (1-7)</span>
-                     {renderCheckInCircles(item.checkInDays)} 
-                   </div>
-                   
-                   <div className="flex flex-col items-end gap-2 shrink-0">
-                      {item.extraTask && item.extraTask !== "無" && (
-                        <div className="text-[10px] font-black text-[#BCAE9F]">
-                          本週加碼：<span className="text-[#967E6B]">{item.extraTask}</span>
-                        </div>
-                      )}
-                      <div className="flex items-center gap-2 bg-[#F8F7F4] px-4 py-2 rounded-xl border border-[#EAE2D5]">
-                        <CheckCircle2 size={14} className="text-emerald-500" />
-                        <span className="text-[10px] font-black text-[#967E6B]">數據已同步</span>
-                      </div>
-                   </div>
-                </div>
-              </div>
-            )) : !loading && <div className="text-center py-20 text-[#BCAE9F] font-bold italic">尚無本週數據紀錄...</div>}
+            ))}
           </div>
         )}
       </main>
-
-      <footer className="max-w-4xl mx-auto px-6 mt-16 text-center">
-        <p className="text-[10px] text-[#CDC5BC] font-bold uppercase tracking-[0.4em]">安心小宇宙能量計畫 · LIVE SYNC MODE</p>
-      </footer>
     </div>
   );
 };
