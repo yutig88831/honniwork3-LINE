@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Sparkles, Trophy, RefreshCw, Quote, ExternalLink, AlertCircle } from 'lucide-react';
+import { Sparkles, Trophy, RefreshCw, AlertCircle, Database, HelpCircle } from 'lucide-react';
 
 /**
  * 🚀 網址貼這裡 🚀
- * 請將 Google Apps Script 部署後獲得的「網頁應用程式網址」貼在下面的引號內
+ * 確保 Google Apps Script 內的讀取範圍已包含到 N 欄
  */
 const SHEET_API_URL = "https://script.google.com/macros/s/AKfycbxU_uYemVqV2qmzU3PhGUIOFkhWNW9T7sQnHAAIdOUUg2g5r0PgWH9PP9fzUzvNX7MS5Q/exec"; 
 
@@ -14,51 +14,50 @@ const App = () => {
   const [error, setError] = useState(null);
   const timeoutRef = useRef(null);
 
-  // 使用 JSONP 方式抓取資料，解決瀏覽器安全限制 (CORS)
   const fetchData = useCallback(() => {
-    if (!SHEET_API_URL) {
-      setError("尚未設定 SHEET_API_URL 網址。");
-      return;
-    }
-
     setLoading(true);
     setError(null);
 
-    // 隨機產生 callback 函式名稱
     const callbackName = 'jsonp_cb_' + Math.round(100000 * Math.random());
     
-    // 定義全域函式給 Google 腳本呼叫
     window[callbackName] = (result) => {
       clearTimeout(timeoutRef.current);
       cleanup(callbackName);
       
       if (Array.isArray(result)) {
-        // 過濾掉名字為空的資料，並依照積分排序
-        const sorted = result
+        // 過濾掉無名氏，並處理數值
+        const processed = result
           .filter(item => item.name && item.name.toString().trim() !== "")
-          .sort((a, b) => (Number(b.totalTickets) || 0) - (Number(a.totalTickets) || 0));
+          .map(item => ({
+            ...item,
+            totalTickets: Number(item.totalTickets) || 0,
+            shoppingGold: Number(item.shoppingGold) || 0
+          }))
+          .sort((a, b) => b.totalTickets - a.totalTickets);
         
-        setData(sorted);
+        if (processed.length === 0) {
+          setError("讀取成功但名單為空。請檢查 Excel 標籤是否為「累積排名」，且資料在 B 欄至 N 欄。");
+        }
+        
+        setData(processed);
         setLastUpdate(new Date().toLocaleTimeString());
       } else if (result && result.error) {
-        setError("試算表錯誤: " + result.error);
+        setError("試算表連線錯誤: " + result.error);
       } else {
-        setError("資料格式不正確，請確認 Google 腳本回傳的是陣列。");
+        setError("資料格式不符。請確認 Google 腳本是否已正確部署。");
       }
       setLoading(false);
     };
 
-    // 建立 script 標籤
     const script = document.createElement('script');
     script.id = callbackName;
     const separator = SHEET_API_URL.includes('?') ? '&' : '?';
     script.src = `${SHEET_API_URL}${separator}callback=${callbackName}&t=${Date.now()}`;
     
-    // 設定 15 秒超時
     timeoutRef.current = setTimeout(() => {
       if (window[callbackName]) {
         cleanup(callbackName);
-        setError("連線超時。請檢查：1. 是否已在 Google 端允許存取 2. 部署網址是否正確 3. 誰可以存取是否設為「所有人」。");
+        setError("伺服器回應過久。請檢查 Google 試算表存取權限是否設為「所有人」。");
         setLoading(false);
       }
     }, 15000);
@@ -66,7 +65,7 @@ const App = () => {
     script.onerror = () => {
       clearTimeout(timeoutRef.current);
       cleanup(callbackName);
-      setError("網址無效或腳本載入失敗。");
+      setError("無法連線至 API。請確認部署網址是否貼正確。");
       setLoading(false);
     };
 
@@ -92,7 +91,7 @@ const App = () => {
         <div className="flex items-center justify-between mt-4">
           <div>
             <h1 className="text-3xl font-black text-[#3D362F] tracking-tight">安心小宇宙</h1>
-            <p className="text-[10px] font-bold text-amber-600 uppercase tracking-[0.2em] mt-1 italic">Live Excel Rankings</p>
+            <p className="text-[10px] font-bold text-amber-600 uppercase tracking-[0.2em] mt-1 italic">N-Column Sync Active</p>
           </div>
           <button 
             onClick={fetchData}
@@ -103,36 +102,50 @@ const App = () => {
           </button>
         </div>
 
-        {/* Error Message */}
+        {/* Diagnostic Hint */}
         {error && (
-          <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex gap-3 animate-in fade-in zoom-in duration-300">
-            <AlertCircle className="text-rose-500 shrink-0" size={18} />
-            <div className="space-y-1">
-              <p className="text-xs font-black text-rose-900">同步失敗</p>
-              <p className="text-[10px] text-rose-700 font-bold leading-relaxed">{error}</p>
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 animate-in fade-in slide-in-from-top-2">
+            <div className="flex gap-3">
+              <AlertCircle className="text-amber-500 shrink-0" size={18} />
+              <div className="space-y-1">
+                <p className="text-xs font-black text-amber-900">同步異常診斷</p>
+                <p className="text-[10px] text-amber-700 font-bold leading-relaxed">{error}</p>
+              </div>
+            </div>
+            <div className="mt-3 pt-3 border-t border-amber-200/50 flex flex-col gap-2">
+              <div className="flex items-center gap-2 text-[9px] font-bold text-amber-600/70">
+                <HelpCircle size={12} /> 檢查 N 欄同步：
+              </div>
+              <ul className="text-[9px] text-amber-700/60 list-disc list-inside space-y-1 ml-1">
+                <li>確認 Week1 分頁的「本週總計」確實位於 <b>N 欄</b></li>
+                <li>累積排名分頁 C2 公式應為：<code className="bg-amber-100 px-1">...Week1!$B$2:$N$100, 13...</code></li>
+                <li>Google 腳本必須讀取 A:N 範圍</li>
+              </ul>
             </div>
           </div>
         )}
 
-        {/* Leaderboard Section */}
+        {/* Leaderboard */}
         <div className="space-y-4">
           <div className="flex items-center justify-between px-2">
             <h2 className="text-sm font-black text-[#5C544B] flex items-center gap-2">
               <span className="w-2 h-2 bg-amber-500 rounded-full animate-pulse"></span>
-              能量累積排行榜
+              能量累積排行榜 (N欄同步)
             </h2>
-            {lastUpdate && <span className="text-[9px] font-bold text-[#B0A695]">最後同步: {lastUpdate}</span>}
+            {lastUpdate && <span className="text-[9px] font-bold text-[#B0A695]">最後更新: {lastUpdate}</span>}
           </div>
 
           <div className="space-y-3">
             {loading && data.length === 0 ? (
               <div className="py-20 text-center">
                 <div className="w-8 h-8 border-4 border-[#EAE2D5] border-t-amber-500 rounded-full animate-spin inline-block mb-4"></div>
-                <p className="text-[10px] font-bold text-[#A69B8F] tracking-widest uppercase">穿越雲端讀取中...</p>
+                <p className="text-[10px] font-bold text-[#A69B8F] tracking-widest uppercase">正在掃描試算表 N 欄...</p>
               </div>
             ) : data.length === 0 && !loading ? (
-              <div className="bg-white rounded-[2.5rem] p-12 text-center border-2 border-dashed border-[#EAE2D5] text-[#CDC5BC] font-bold text-sm">
-                試算表中目前沒有資料
+              <div className="bg-white rounded-[2.5rem] p-12 text-center border-2 border-dashed border-[#EAE2D5] text-[#CDC5BC] font-bold flex flex-col items-center gap-3">
+                <Database size={32} strokeWidth={1} />
+                <span className="text-sm">尚未讀取到資料</span>
+                <p className="text-[10px] font-normal text-[#A69B8F]">請檢查 Excel N 欄與分頁名稱</p>
               </div>
             ) : (
               data.map((item, idx) => (
@@ -141,7 +154,7 @@ const App = () => {
                   className="bg-white rounded-[1.5rem] p-4 shadow-sm border border-[#EAE2D5] flex items-center gap-4 transition-all hover:translate-y-[-2px]"
                 >
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm
-                    ${idx === 0 ? 'bg-amber-100 text-amber-600' : 'bg-stone-100 text-stone-400'}`}>
+                    ${idx === 0 ? 'bg-amber-100 text-amber-600' : idx === 1 ? 'bg-slate-100 text-slate-500' : idx === 2 ? 'bg-orange-50 text-orange-700' : 'bg-stone-50 text-stone-300'}`}>
                     {idx + 1}
                   </div>
                   
@@ -155,7 +168,7 @@ const App = () => {
 
                   <div className="text-right">
                     <div className="text-lg font-black text-[#967E6B] leading-none">{item.totalTickets || 0}</div>
-                    <div className="text-[8px] font-bold text-[#B0A695] uppercase tracking-tighter mt-1">Total Points</div>
+                    <div className="text-[8px] font-bold text-[#B0A695] uppercase tracking-tighter mt-1">N-Col Score</div>
                   </div>
                 </div>
               ))
@@ -163,16 +176,16 @@ const App = () => {
           </div>
         </div>
 
-        {/* Footer Info */}
-        <div className="p-6 bg-[#3D362F] rounded-[2.5rem] text-white shadow-xl shadow-[#3D362F]/10">
+        {/* Footer */}
+        <div className="p-6 bg-[#3D362F] rounded-[2.5rem] text-white shadow-xl">
           <div className="flex items-start gap-4">
-            <div className="bg-white/10 p-3 rounded-2xl">
-              <Trophy className="text-amber-400" size={24} />
+            <div className="bg-white/10 p-3 rounded-2xl text-amber-400">
+              <Trophy size={24} />
             </div>
             <div>
               <h4 className="text-sm font-black text-amber-100 mb-1 italic">「能量累積，是對未來的底氣」</h4>
               <p className="text-[10px] text-white/40 font-bold leading-relaxed">
-                排名根據 Google 試算表即時換算。積分與購物金換算比例為 10:1。
+                系統已設定為讀取 Excel 的 N 欄為總計得分。如有數據落差請確認試算表公式。
               </p>
             </div>
           </div>
